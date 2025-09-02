@@ -53,7 +53,7 @@ class Server:
         self.socket.bind(address, port)
         self.socket.listen(1)
         #capaz podriamos hacer que el server notifique
-
+        #Y que pueda hacer threads, así puede atender a más de uno a la vez
 
     def add_method(self, proc1):
         self.metodos.add(proc1) 
