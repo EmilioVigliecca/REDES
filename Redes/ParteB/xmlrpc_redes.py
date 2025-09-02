@@ -4,8 +4,8 @@ import xml.etree.ElementTree as ET
 class Client:
 
     def __init__(self, address, port):
-        self.address = port
-        self.port = port
+        self.server_address = address
+        self.server_port = port
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.connect(address, port)
 
@@ -25,7 +25,7 @@ class Client:
               <params>{parametros}</params>
             </methodCall>"""
 
-            request = f"POST /RPC2 HTTP/1.1\r\nHost: {self.address}\r\nContent-Length: {len(xml)}\r\n\r\n{xml}"
+            request = f"POST /RPC2 HTTP/1.1\r\nHost: {self.server_address}\r\nContent-Length: {len(xml)}\r\n\r\n{xml}"
 
             # - mandarlo al servidor
             self.socket.send(request.encode()) 
