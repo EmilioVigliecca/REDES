@@ -46,7 +46,7 @@ def connect(address, port):
 
 class Server:
     def __init__(self, address, port):
-        self.address = port
+        self.address = address
         self.port = port
         self.metodos = {}
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
