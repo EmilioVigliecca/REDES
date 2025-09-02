@@ -43,9 +43,6 @@ class Client:
 def connect(address, port):
     return Client(address, port)
 
-#class Client:
-#    def connect(adress, port):
-#        return Client(adress, port)
 
 class Server:
     def __init__(self, address, port):
