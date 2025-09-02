@@ -50,7 +50,7 @@ class Server:
         self.port = port
         self.metodos = {}
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.bind(address, port)
+        self.socket.bind((address, port))
         self.socket.listen(1)
         #capaz podriamos hacer que el server notifique
         #Y que pueda hacer threads, así puede atender a más de uno a la vez
