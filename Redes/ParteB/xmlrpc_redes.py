@@ -14,9 +14,7 @@ class Client:
         #Esta funcion se llama cuando se invoca un metodo que no esta definido: 
         
         def metodo_remoto(*args):
-            #este metodo deberia ser capaz de:
-            # - armar un XML
-            
+            # armar el XML:
             parametros = "".join(
                 f"<param><value><int>{a}</int></value></param>" for a in args
             )             
@@ -33,7 +31,7 @@ class Client:
             
             # - recibir respuesta
             data = self.socket.recv(4096)
-            # El ,err no va me parece
+
             try:
                 respuesta_xml = data.decode()
                 root = ET.fromstring(respuesta_xml)
@@ -47,8 +45,7 @@ class Client:
 
 def connect(address, port):
     return Client(address, port)
-
-
+    
 class Server:
     def __init__(self, address, port):
         self.address = address
@@ -57,9 +54,8 @@ class Server:
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.bind((address, port)) #recibe una tupla (address, port)
         self.socket.listen(5)
+        #El servidor notifica:
         print(f"Servidor escuchando en {self.address}:{self.port}")
-        #capaz podriamos hacer que el server notifique
-        #Y que pueda hacer threads, así puede atender a más de uno a la vez
 
     def add_method(self, proc1):
         self.metodos[proc1.__name__] = proc1
@@ -89,7 +85,7 @@ class Server:
                     # Encuentra el valor dentro de <value> e <int>
                     value_node = param_node.find('value/int')
                     if value_node is not None:
-                        params.append(value_node.text)
+                        params.append(int(value_node.text))
             
             #identificar que funcion pidio:
             if method_name in self.metodos:
