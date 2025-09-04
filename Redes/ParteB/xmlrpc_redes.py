@@ -37,33 +37,38 @@ class Client:
                     <params>{parametros}</params>
                 </methodCall>"""
 
-            request = f"POST /RPC2 HTTP/1.1\r\nHost: {self.server_address}\r\nContent-Length: {len(xml)}\r\n\r\n{xml}"
-
-            # - mandarlo al servidor
+            request = (
+                f"POST /RPC2 HTTP/1.0\r\n"
+                f"User-Agent: Python-XMLRPC\r\n" #No se si usar este
+                f"Host: {self.server_address}\r\n"
+                f"Content-Type: text/xml\r\n"
+                f"Content-Length: {len(xml)}\r\n\r\n"
+                f"{xml}"
+            )
+            # Enviarlo al servidor
             self.socket.sendall(request.encode()) 
             
-            # - recibir respuesta
+            # Recibir respuesta
             data = self.socket.recv(4096)
+            respuesta_xml = data.decode()
 
             try:
-                respuesta_xml = data.decode()
                 root = ET.fromstring(respuesta_xml)
-
-                # Busca tanto el resultado como el error
-                result_node = root.find('result')
-                error_node = root.find('error')
-
-                if result_node is not None:
-                    return result_node.text
-                elif error_node is not None:
-                    return f"Error del servidor: {error_node.text}"
-                else:
-                    return "Error: Respuesta XML inválida"
-            except (ET.ParseError, AttributeError, IndexError) as e:
-                return f"Error al parsear la respuesta: {e}"
+            except ET.ParseError as e:
+                return f"Error al parsear XML: {e}"
             
+            if root.tag == "methodResponse":
+                param_node = root.find("params/param/value")
+                if param_node is not None:
+                    return param_node[0].text
+                
+                
+                fault_string = root.find("fault/value/struct/member[name='faultString']/value/string")
+                return f"Error: {fault_string.text if fault_string is not None else 'desconocido'}"
+            else:
+                return "Respuesta inválida"
         return metodo_remoto
-
+            
 def connect(address, port):
     return Client(address, port)
     
@@ -83,66 +88,80 @@ class Server:
             self.metodos[proc1.__name__] = proc1
 
     #Funcion que se ejecuta por cada thread:
-    def atender_cliente(self, conn, address):
+    def atender_cliente(self, conn, addr):
+
+        print(f"Atendiendo a: {addr}")
         try:
-            # aceptar conexiones:
-            # Recibir datos completos del cliente.
-            data = conn.recv(4096).decode()
-            
-            # Separar las cabeceras del cuerpo del mensaje HTTP.
-            # La parte del cuerpo contiene el XML.
-            header, xml_body = data.split('\r\n\r\n', 1)
-            
-            # Procesar el XML del cuerpo. (<methodCall en mensaje del cliente>)
-            root = ET.fromstring(xml_body)
-            
-            # Extraer el nombre del método.
-            method_name = root.find('methodName').text
-            
-            # Extraer los parámetros navegando por la estructura anidada.
-            params_node = root.find('params')
-            params = []
-            if params_node is not None:
-                for param_node in params_node.findall('param'):
-                    value_node = param_node.find('value')
-                    if value_node is not None:
-                        # Revisa si el valor es un entero
-                        int_node = value_node.find('int')
-                        if int_node is not None:
-                            params.append(int(int_node.text))
-                        # Revisa si el valor es un string
-                        else:
+            while (True):
+                # Recibir datos completos del cliente.
+                data = conn.recv(4096).decode()
+                
+                # Separar las cabeceras del cuerpo del mensaje HTTP.
+                # La parte del cuerpo contiene el XML.
+                header, xml_body = data.split('\r\n\r\n', 1)
+                
+                # Procesar el XML del cuerpo. (<methodCall en mensaje del cliente>)
+                try:
+                    root = ET.fromstring(xml_body)
+                except ET.ParseError as e:
+                    respuesta_xml = mensaje_fault(1, f"Error de parseo XML")
+                    conn.sendall(respuesta_xml.encode())
+                    return
+                
+                # Extraer el nombre del método.
+                method_name = root.find('methodName').text
+                
+                # Extraer los parámetros navegando por la estructura anidada.
+                params = []
+                #try:
+                params_node = root.find('params')    
+                if params_node is not None:
+                    for param_node in params_node.findall('param'):
+                        value_node = param_node.find('value')
+                        if value_node is not None:
+                            # Revisa si el valor es un entero
+                            int_node = value_node.find('int')
                             string_node = value_node.find('string')
-                            if string_node is not None:
+                            if int_node is not None:
+                                params.append(int(int_node.text))
+                            elif string_node is not None:
                                 params.append(string_node.text)
                             else:
-                                raise ValueError("Unsupported parameter type in XML")
+                                raise ValueError("Tipo de parámetro no válido")
 
-            
-            #identificar que funcion pidio:
-            if method_name in self.metodos:
+                #identificar que funcion pidio:
+                if method_name not in self.metodos:
+                    respuesta_xml = mensaje_fault(2, f"No existe el método invocado: '{method_name}'")
+                else:
+                    result = self.metodos[method_name](*params)
+                    if isinstance(result, int):
+                        respuesta_xml = f"""<?xml version="1.0"?>
+    <methodResponse>
+    <params>
+        <param>
+            <value><int>{result}</int></value>
+        </param>
+    </params>
+    </methodResponse>"""
+                    else: # Se asume que es string para los demás casos como 'listarMetodos'
+                        respuesta_xml = f"""<?xml version="1.0"?>
+    <methodResponse>
+    <params>
+        <param>
+            <value><string>{result}</string></value>
+        </param>
+    </params>
+    </methodResponse>"""
 
-                #agregar excepcion parametros incorrecos
-                
-                result = self.metodos[method_name](*params)
-                # Correcto: Envolver la respuesta en XML
-                respuesta_xml = f"<response><result>{result}</result></response>"
                 conn.sendall(respuesta_xml.encode())
-            else:
-                # Correcto: Envolver el error en XML
-                respuesta_xml = f"<response><error>Metodo '{method_name}' no encontrado.</error></response>"
-                conn.sendall(respuesta_xml.encode())
-
-        except (ET.ParseError, IndexError, AttributeError) as e:
-            # Manejar errores de parseo o de índice (ej. si no hay cuerpo HTTP)
-            respuesta_xml = f"<response><error>XML o mensaje invalido: {e}</error></response>"
-            conn.sendall(respuesta_xml.encode())
+#hasta aca iria el while true
         except Exception as e:
-            # Manejar cualquier otro error inesperado.
-            respuesta_xml = f"<response><error>Error del servidor: {e}</error></response>"
+            respuesta_xml = mensaje_fault(5, f"Error interno en la ejecución del método: {e}")
             conn.sendall(respuesta_xml.encode())
-        #finally:
-            #conn.close()
+        finally:
+            conn.close()
+
+        
 
     def serve(self):
         while True:
@@ -159,3 +178,24 @@ class Server:
     def listarMetodos(self):
         return ", ".join(self.metodos.keys())
 
+
+
+#Constructor de Fault Examples
+def mensaje_fault(code, message):
+    return f"""<?xml version="1.0"?>
+<methodResponse>
+   <fault>
+      <value>
+         <struct>
+            <member>
+               <name>faultCode</name>
+               <value><int>{code}</int></value>
+               </member>
+            <member>
+               <name>faultString</name>
+               <value><string>{message}</string></value>
+            </member>
+         </struct>
+      </value>
+   </fault>
+</methodResponse>"""
