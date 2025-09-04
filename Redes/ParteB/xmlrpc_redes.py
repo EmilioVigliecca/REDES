@@ -133,33 +133,37 @@ class Server:
                 if method_name not in self.metodos:
                     respuesta_xml = mensaje_fault(2, f"No existe el método invocado: '{method_name}'")
                 else:
-                    result = self.metodos[method_name](*params)
-                    if isinstance(result, int):
-                        respuesta_xml = f"""<?xml version="1.0"?>
-    <methodResponse>
-    <params>
-        <param>
-            <value><int>{result}</int></value>
-        </param>
-    </params>
-    </methodResponse>"""
-                    else: # Se asume que es string para los demás casos como 'listarMetodos'
-                        respuesta_xml = f"""<?xml version="1.0"?>
-    <methodResponse>
-    <params>
-        <param>
-            <value><string>{result}</string></value>
-        </param>
-    </params>
-    </methodResponse>"""
+                    try:    
+                        result = self.metodos[method_name](*params)
+                        if isinstance(result, int):
+                            respuesta_xml = f"""<?xml version="1.0"?>
+        <methodResponse>
+        <params>
+            <param>
+                <value><int>{result}</int></value>
+            </param>
+        </params>
+        </methodResponse>"""
+                        else: # Se asume que es string para los demás casos como 'listarMetodos'
+                            respuesta_xml = f"""<?xml version="1.0"?>
+        <methodResponse>
+        <params>
+            <param>
+                <value><string>{result}</string></value>
+            </param>
+        </params>
+        </methodResponse>"""
+                    except Exception as e:
+                        respuesta_xml = mensaje_fault(3, f"Error en parámetros del método invocado.")
 
                 conn.sendall(respuesta_xml.encode())
 #hasta aca iria el while true
         except Exception as e:
-            respuesta_xml = mensaje_fault(5, f"Error interno en la ejecución del método: {e}")
+            respuesta_xml = mensaje_fault(4, f"Error interno en la ejecución del método: {e}")
             conn.sendall(respuesta_xml.encode())
         finally:
             conn.close()
+            print(f"Conexión terminada con {addr}")
 
         
 

@@ -8,7 +8,7 @@ def dividir(a, b):
 
 def esPrefijo (cadena1, cadena2):
     resultado = ""
-    if (cadena2.startswith(cadena1)):
+    if (cadena2.lower().startswith(cadena1.lower())):
         resultado = (cadena1 + " es prefijo de " + cadena2)
     else:
         resultado = (cadena1 + " NO es prefijo de " + cadena2)
