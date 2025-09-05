@@ -1,33 +1,31 @@
 import threading
 import socket
 import xml.etree.ElementTree as ET
+from email.utils import formatdate
 
 class Client:
 
     def __init__(self, address, port):
+        # Inicializa el cliente, se conecta al servidor
         self.server_address = address
         self.server_port = port
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.connect((address, port)) #Es tupla, no sacar segundo parentesis
+        self.socket.connect((address, port)) #Es una tupla, no quitar el segundo paréntesis
 
     def _get_xml_value(self, arg):
-
-        #Determina el tipo de un argumento y lo envuelve en la etiqueta XML adecuada.
-
+        # Determina el tipo de un argumento y lo envuelve en la etiqueta XML adecuada
         if isinstance(arg, int):
             return f"<value><int>{arg}</int></value>"
         elif isinstance(arg, str):
             return f"<value><string>{arg}</string></value>"
         else:
-            raise TypeError(f"Unsupported argument type: {type(arg)}")
+            raise TypeError(f"Tipo de argumento no soportado: {type(arg)}")
 
     def __getattr__(self, nombre_metodo):
-        #Esta funcion se llama cuando se invoca un metodo que no esta definido: 
-        
+        # Esta función se llama cuando se invoca un método que no está definido
         def metodo_remoto(*args):
             
-            # armar el XML:
-            
+            # Construir el XML de la llamada al método.
             parametros = "".join(
                 f"<param>{self._get_xml_value(a)}</param>" for a in args
             )             
@@ -37,32 +35,42 @@ class Client:
                     <params>{parametros}</params>
                 </methodCall>"""
 
+            # Construir la solicitud HTTP.
             request = (
                 f"POST /RPC2 HTTP/1.0\r\n"
-                f"User-Agent: Python-XMLRPC\r\n" #No se si usar este
+                f"User-Agent: Cliente-XMLRPC\r\n"
                 f"Host: {self.server_address}\r\n"
                 f"Content-Type: text/xml\r\n"
                 f"Content-Length: {len(xml)}\r\n\r\n"
                 f"{xml}"
             )
-            # Enviarlo al servidor
+
+            # Enviar la solicitud al servidor
             self.socket.sendall(request.encode()) 
             
-            # Recibir respuesta
-            data = self.socket.recv(4096)
-            respuesta_xml = data.decode()
-
+            # Recibir la respuesta del servidor (HTTP + XML)
+            data = self.socket.recv(4096).decode()
+            
+            # Separar los encabezados del cuerpo XML de la respuesta HTTP.
             try:
-                root = ET.fromstring(respuesta_xml)
+                header, xml_body = data.split('\r\n\r\n', 1)
+            except ValueError:
+                # Esto puede pasar si la respuesta no tiene el formato esperado
+                return f"Error al parsear la respuesta del servidor: {data}"
+            
+            # Procesar el cuerpo XML de la respuesta.
+            try:
+                root = ET.fromstring(xml_body)
             except ET.ParseError as e:
                 return f"Error al parsear XML: {e}"
             
             if root.tag == "methodResponse":
                 param_node = root.find("params/param/value")
                 if param_node is not None:
+                    # Devuelve el valor del nodo, asume que es un texto
                     return param_node[0].text
                 
-                
+                # Manejo de fallas
                 fault_string = root.find("fault/value/struct/member[name='faultString']/value/string")
                 return f"Error: {fault_string.text if fault_string is not None else 'desconocido'}"
             else:
@@ -74,6 +82,7 @@ def connect(address, port):
     
 class Server:
     def __init__(self, address, port):
+        # Inicializa el servidor, enlaza y escucha en el puerto especificado.
         self.address = address
         self.port = port
         self.metodos = {}
@@ -85,41 +94,59 @@ class Server:
         print(f"Servidor escuchando en {self.address}:{self.port}")
 
     def add_method(self, proc1):
+            # Registra un metodo para ser llamado remotamente
             self.metodos[proc1.__name__] = proc1
+    
+    def construir_respuesta(self, xml):
+        # Construye la respuesta HTTP completa
+        content_length = len(xml.encode())
+        headers = (
+            "HTTP/1.1 200 OK\r\n"
+            "Connection: keep-alive\r\n"
+            f"Content-Length: {content_length}\r\n"
+            "Content-Type: text/xml\r\n"
+            f"Date: {formatdate(timeval=None, localtime=False, usegmt=True)}\r\n"
+            "Server: XMLRPC-Python/1.0\r\n"
+            "\r\n"
+        )
+        return headers + xml
 
-    #Funcion que se ejecuta por cada thread:
+
+    # Funcion que se ejecuta en un hilo para atender a un cliente
     def atender_cliente(self, conn, addr):
-
         print(f"Atendiendo a: {addr}")
         try:
-            while (True):
-                # Recibir datos completos del cliente.
-                data = conn.recv(4096).decode()
+            while True:  # Mantener la conexión abierta para múltiples solicitudes
+                # Recibir datos del cliente.
+                data = conn.recv(4096)
+                if not data:
+                    # El cliente ha cerrado la conexión, salir del bucle
+                    break
                 
-                # Separar las cabeceras del cuerpo del mensaje HTTP.
-                # La parte del cuerpo contiene el XML.
+                # procesar la solicitud
+                data = data.decode()
+                
+                # Separar las cabeceras del cuerpo del mensaje HTTP
                 header, xml_body = data.split('\r\n\r\n', 1)
                 
-                # Procesar el XML del cuerpo. (<methodCall en mensaje del cliente>)
-                try:
+                # Procesar el XML del cuerpo (<methodCall> del cliente)
+                try:       
                     root = ET.fromstring(xml_body)
                 except ET.ParseError as e:
                     respuesta_xml = mensaje_fault(1, f"Error de parseo XML")
-                    conn.sendall(respuesta_xml.encode())
-                    return
+                    respuesta_http = self.construir_respuesta(respuesta_xml)
+                    conn.sendall(respuesta_http.encode())
+                    continue
                 
-                # Extraer el nombre del método.
                 method_name = root.find('methodName').text
                 
-                # Extraer los parámetros navegando por la estructura anidada.
+                # Extraer los parametros
                 params = []
-                #try:
                 params_node = root.find('params')    
                 if params_node is not None:
                     for param_node in params_node.findall('param'):
                         value_node = param_node.find('value')
                         if value_node is not None:
-                            # Revisa si el valor es un entero
                             int_node = value_node.find('int')
                             string_node = value_node.find('string')
                             if int_node is not None:
@@ -127,64 +154,68 @@ class Server:
                             elif string_node is not None:
                                 params.append(string_node.text)
                             else:
-                                raise ValueError("Tipo de parámetro no válido")
+                                respuesta_xml = mensaje_fault(3, f"Error en los parámetros del método invocado.")
+                                respuesta_http = self.construir_respuesta(respuesta_xml)
+                                conn.sendall(respuesta_http.encode())
+                                continue
 
-                #identificar que funcion pidio:
+                # Identificar el metodo solicitado
                 if method_name not in self.metodos:
                     respuesta_xml = mensaje_fault(2, f"No existe el método invocado: '{method_name}'")
                 else:
                     try:    
+                        # Ejecutar el metodo
                         result = self.metodos[method_name](*params)
                         if isinstance(result, int):
                             respuesta_xml = f"""<?xml version="1.0"?>
-        <methodResponse>
-        <params>
-            <param>
-                <value><int>{result}</int></value>
-            </param>
-        </params>
-        </methodResponse>"""
-                        else: # Se asume que es string para los demás casos como 'listarMetodos'
+    <methodResponse>
+    <params>
+        <param>
+            <value><int>{result}</int></value>
+        </param>
+    </params>
+    </methodResponse>"""
+                        else: # Se asume que es string para los demás casos
                             respuesta_xml = f"""<?xml version="1.0"?>
-        <methodResponse>
-        <params>
-            <param>
-                <value><string>{result}</string></value>
-            </param>
-        </params>
-        </methodResponse>"""
+    <methodResponse>
+    <params>
+        <param>
+            <value><string>{result}</string></value>
+        </param>
+    </params>
+    </methodResponse>"""
                     except Exception as e:
-                        respuesta_xml = mensaje_fault(3, f"Error en parámetros del método invocado.")
+                        respuesta_xml = mensaje_fault(3, f"Error en la ejecución del método.")
 
-                conn.sendall(respuesta_xml.encode())
-#hasta aca iria el while true
+                # Enviar la respuesta al cliente
+                respuesta_http = self.construir_respuesta(respuesta_xml)
+                conn.sendall(respuesta_http.encode())
+
         except Exception as e:
+            # Manejo de errores fatales fuera del bucle.
             respuesta_xml = mensaje_fault(4, f"Error interno en la ejecución del método: {e}")
-            conn.sendall(respuesta_xml.encode())
+            respuesta_http = self.construir_respuesta(respuesta_xml)
+            conn.sendall(respuesta_http.encode())
+
+        # finally cierra la conexión una vez que el bucle while haya terminado (exit)
         finally:
             conn.close()
             print(f"Conexión terminada con {addr}")
 
-        
-
     def serve(self):
+        # Bucle para aceptar nuevas conexiones de clientes
         while True:
-            # INLCUIR THREADS PARA QUE PUEDA ATENDER A MAS DE UN CLIENTE A LA VEZ
             conn, addr = self.socket.accept()
             print(f"Conexión aceptada de {addr}")
             
-
+            # Hilo para atender a cada cliente
             client_thread = threading.Thread(target=self.atender_cliente, args=(conn, addr))
-            
-            # Inicia el hilo. Esto permite que el servidor vuelva a la línea `accept()`.
             client_thread.start()
             
     def listarMetodos(self):
         return ", ".join(self.metodos.keys())
 
-
-
-#Constructor de Fault Examples
+# Constructor de fault message
 def mensaje_fault(code, message):
     return f"""<?xml version="1.0"?>
 <methodResponse>
