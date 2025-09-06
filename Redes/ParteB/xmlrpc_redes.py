@@ -2,6 +2,7 @@ import threading
 import socket
 import xml.etree.ElementTree as ET
 from email.utils import formatdate
+import inspect 
 
 class Client:
 
@@ -96,6 +97,15 @@ class Server:
     def add_method(self, proc1):
             # Registra un metodo para ser llamado remotamente
             self.metodos[proc1.__name__] = proc1
+
+    def listarMetodos(self):
+        metodos_con_parametros = []
+        for nombre, funcion in self.metodos.items():
+            if nombre == 'listarMetodos':
+                continue
+            parametros = inspect.signature(funcion).parameters.keys()
+            metodos_con_parametros.append(f"{nombre}({', '.join(parametros)})")
+        return ", ".join(metodos_con_parametros)
     
     def construir_respuesta(self, xml):
         # Construye la respuesta HTTP completa
@@ -120,6 +130,7 @@ class Server:
                 # Recibir datos del cliente.
                 data = conn.recv(4096)
                 if not data:
+                    
                     # El cliente ha cerrado la conexión, salir del bucle
                     break
                 
@@ -154,7 +165,7 @@ class Server:
                             elif string_node is not None:
                                 params.append(string_node.text)
                             else:
-                                respuesta_xml = mensaje_fault(3, f"Error en los parámetros del método invocado.")
+                                respuesta_xml = mensaje_fault(3, f"Error en parámetros del método invocado.")
                                 respuesta_http = self.construir_respuesta(respuesta_xml)
                                 conn.sendall(respuesta_http.encode())
                                 continue
@@ -165,7 +176,9 @@ class Server:
                 else:
                     try:    
                         # Ejecutar el metodo
+                        
                         result = self.metodos[method_name](*params)
+                        
                         if isinstance(result, int):
                             respuesta_xml = f"""<?xml version="1.0"?>
     <methodResponse>
@@ -184,8 +197,12 @@ class Server:
         </param>
     </params>
     </methodResponse>"""
+                    except TypeError as e:
+                        # Captura errores de parámetros (ej. número incorrecto de argumentos)
+                        respuesta_xml = mensaje_fault(3, f"Error en parámetros del método: {e}")
                     except Exception as e:
-                        respuesta_xml = mensaje_fault(3, f"Error en la ejecución del método.")
+                        # Captura cualquier otra falla interna (ej. dividir por cero)
+                        respuesta_xml = mensaje_fault(4, f"Error interno en la ejecución del método: {e}")
 
                 # Enviar la respuesta al cliente
                 respuesta_http = self.construir_respuesta(respuesta_xml)
@@ -213,7 +230,16 @@ class Server:
             client_thread.start()
             
     def listarMetodos(self):
-        return ", ".join(self.metodos.keys())
+        metodos_con_parametros = []
+        for nombre, funcion in self.metodos.items():
+            # Excluimos el método "listarMetodos" de la lista
+            if nombre == 'listarMetodos':
+                continue
+            
+            # Usamos inspect para obtener los nombres de los parámetros de cada función
+            parametros = inspect.signature(funcion).parameters.keys()
+            metodos_con_parametros.append(f"{nombre}({', '.join(parametros)})")
+        return ", ".join(metodos_con_parametros)
 
 # Constructor de fault message
 def mensaje_fault(code, message):
