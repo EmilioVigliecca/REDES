@@ -28,16 +28,31 @@ while(True):
         
         if len(partes) > 1:
             args_str = partes[1].strip(')')
+            args_list = []
             if args_str:
-                args_list = []
                 for a in args_str.split(','):
                     valor = a.strip()
                     # Verifica si el argumento es una cadena (comienza y termina con comillas)
+                    #if (valor.startswith("'") and valor.endswith("'")) or (valor.startswith('"') and valor.endswith('"')):
+                    #    args_list.append(valor.strip("'").strip('"'))
+                    #elif valor.isdigit():
+                        # Si no, lo trata como un entero
+                    #    args_list.append(int(valor))
+                    #else:
+                    #    args_list.append(valor)
+         
+                    # Si está entre comillas, es string literal
                     if (valor.startswith("'") and valor.endswith("'")) or (valor.startswith('"') and valor.endswith('"')):
                         args_list.append(valor.strip("'").strip('"'))
                     else:
-                        # Si no, lo trata como un entero
-                        args_list.append(int(valor))
+                        # Intento primero int, luego float, y si nada funciona lo dejo como string
+                        try:
+                            args_list.append(int(valor))
+                        except ValueError:
+                            try:
+                                args_list.append(float(valor))
+                            except ValueError:
+                                args_list.append(valor)  # se envía como string                            
                 args = args_list
             else:
                 args = []

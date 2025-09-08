@@ -127,11 +127,12 @@ class Server:
         print(f"Atendiendo a: {addr}")
         try:
             while True:  # Mantener la conexión abierta para múltiples solicitudes
+                
                 # Recibir datos del cliente.
                 data = conn.recv(4096)
                 if not data:
                     
-                    # El cliente ha cerrado la conexión, salir del bucle
+                    # El cliente cerro la conexión, hay que salir del bucle
                     break
                 
                 # procesar la solicitud
@@ -203,7 +204,9 @@ class Server:
                     except Exception as e:
                         # Captura cualquier otra falla interna (ej. dividir por cero)
                         respuesta_xml = mensaje_fault(4, f"Error interno en la ejecución del método: {e}")
-
+                    except ValueError as e:
+                        respuesta_xml = mensaje_fault(5, f"Entrada inválida: {e}")
+                        
                 # Enviar la respuesta al cliente
                 respuesta_http = self.construir_respuesta(respuesta_xml)
                 conn.sendall(respuesta_http.encode())
