@@ -22,6 +22,34 @@ class Client:
         else:
             raise TypeError(f"Tipo de argumento no soportado: {type(arg)}")
 
+    def _recibir_http(self):
+        data = b""
+        while b"\r\n\r\n" not in data:
+            chunk = self.socket.recv(4096)
+            if not chunk:
+                raise ConnectionError("Conexión cerrada antes de recibir headers")
+            data += chunk
+
+        header, resto = data.split(b"\r\n\r\n", 1)
+
+        # Buscar Content-Length
+        headers = header.decode().split("\r\n")
+        content_length = 0
+        for h in headers:
+            if h.lower().startswith("content-length:"):
+                content_length = int(h.split(":", 1)[1].strip())
+
+        # Leer hasta completar el cuerpo
+        cuerpo = resto
+        while len(cuerpo) < content_length:
+            chunk = self.socket.recv(4096)
+            if not chunk:
+                raise ConnectionError("Conexión cerrada antes de recibir cuerpo completo")
+            cuerpo += chunk
+
+        return header.decode(), cuerpo.decode()
+
+
     def __getattr__(self, nombre_metodo):
         # Esta función se llama cuando se invoca un método que no está definido
         def metodo_remoto(*args):
@@ -50,15 +78,17 @@ class Client:
             self.socket.sendall(request.encode()) 
             
             # Recibir la respuesta del servidor (HTTP + XML)
-            data = self.socket.recv(4096).decode()
-            
+            #data = self.socket.recv(4096).decode()
+
             # Separar los encabezados del cuerpo XML de la respuesta HTTP.
-            try:
-                header, xml_body = data.split('\r\n\r\n', 1)
-            except ValueError:
+            #try:
+            #    header, xml_body = data.split('\r\n\r\n', 1)
+            #except ValueError:
                 # Esto puede pasar si la respuesta no tiene el formato esperado
-                return f"Error al parsear la respuesta del servidor: {data}"
+            #    return f"Error al parsear la respuesta del servidor: {data}"
             
+            header, xml_body = self._recibir_http()
+
             # Procesar el cuerpo XML de la respuesta.
             try:
                 root = ET.fromstring(xml_body)
@@ -120,6 +150,36 @@ class Server:
             "\r\n"
         )
         return headers + xml
+    
+    def recibir_http(self, conn):
+        # Leer hasta encontrar el final de los headers (hasta \r\n\r\n)
+        data = b""
+        while b"\r\n\r\n" not in data:
+            chunk = conn.recv(4096)
+            if not chunk:
+                raise ConnectionError("Conexión cerrada antes de recibir headers")
+            data += chunk
+
+        #Separo headers del resto
+        header, resto = data.split(b"\r\n\r\n", 1)
+
+        # Busco Content-Length
+        headers = header.decode().split("\r\n")
+        content_length = 0
+        for h in headers:
+            if h.lower().startswith("content-length:"):
+                content_length = int(h.split(":", 1)[1].strip())
+
+        # Sigo leyendo hasta completar el cuerpo entero
+        cuerpo = resto
+        while len(cuerpo) < content_length:
+            chunk = conn.recv(4096)
+            if not chunk:
+                raise ConnectionError("Conexión cerrada antes de recibir el cuerpo completo")
+            cuerpo += chunk
+
+        return header.decode(), cuerpo.decode()
+
 
 
     # Funcion que se ejecuta en un hilo para atender a un cliente
@@ -128,20 +188,26 @@ class Server:
         try:
             while True:  # Mantener la conexión abierta para múltiples solicitudes
                 
-                # Recibir datos del cliente.
-                data = conn.recv(4096)
-                if not data:
-                    
-                    # El cliente cerro la conexión, hay que salir del bucle
+                try:
+                    header, xml_body = self.recibir_http(conn)
+                except ConnectionError:
                     break
                 
+                # Recibir datos del cliente.
+                #data = conn.recv(4096)
+                #if not data:
+                    
+                    # El cliente cerro la conexión, hay que salir del bucle
+                #    break
+                
                 # procesar la solicitud
-                data = data.decode()
+                #data = data.decode()
                 
                 # Separar las cabeceras del cuerpo del mensaje HTTP
-                header, xml_body = data.split('\r\n\r\n', 1)
+                #header, xml_body = data.split('\r\n\r\n', 1)
                 
                 # Procesar el XML del cuerpo (<methodCall> del cliente)
+                
                 try:       
                     root = ET.fromstring(xml_body)
                 except ET.ParseError as e:
@@ -149,7 +215,7 @@ class Server:
                     respuesta_http = self.construir_respuesta(respuesta_xml)
                     conn.sendall(respuesta_http.encode())
                     continue
-                
+
                 method_name = root.find('methodName').text
                 
                 # Extraer los parametros
@@ -199,7 +265,7 @@ class Server:
     </params>
     </methodResponse>"""
                     except TypeError as e:
-                        # Captura errores de parámetros (ej. número incorrecto de argumentos)
+                       # Captura errores de parámetros (ej. número incorrecto de argumentos)
                         respuesta_xml = mensaje_fault(3, f"Error en parámetros del método: {e}")
                     except Exception as e:
                         # Captura cualquier otra falla interna (ej. dividir por cero)

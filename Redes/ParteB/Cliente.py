@@ -58,6 +58,7 @@ while(True):
                 args = []
         else:
             args = []
+
 #esto es una cadena de soluciones, primero daba un error rarisimo si la entrada no tenia parentesis
 #porque eval ejecutaba como codigo conn.ejemplo y se rompia
 #Para solucionar esto separe la entrada entre nombre de metodo y parametros
@@ -68,6 +69,7 @@ while(True):
             
         # Llamar al método dinámicamente
         metodo_remoto = getattr(conn, nombre_metodo)
+        
         resultado = metodo_remoto(*args)
         
         print(f"\nResultado: {resultado}\n")
