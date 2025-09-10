@@ -77,16 +77,6 @@ class Client:
             # Enviar la solicitud al servidor
             self.socket.sendall(request.encode()) 
             
-            # Recibir la respuesta del servidor (HTTP + XML)
-            #data = self.socket.recv(4096).decode()
-
-            # Separar los encabezados del cuerpo XML de la respuesta HTTP.
-            #try:
-            #    header, xml_body = data.split('\r\n\r\n', 1)
-            #except ValueError:
-                # Esto puede pasar si la respuesta no tiene el formato esperado
-            #    return f"Error al parsear la respuesta del servidor: {data}"
-            
             header, xml_body = self._recibir_http()
 
             # Procesar el cuerpo XML de la respuesta.
@@ -128,14 +118,6 @@ class Server:
             # Registra un metodo para ser llamado remotamente
             self.metodos[proc1.__name__] = proc1
 
-    def listarMetodos(self):
-        metodos_con_parametros = []
-        for nombre, funcion in self.metodos.items():
-            if nombre == 'listarMetodos':
-                continue
-            parametros = inspect.signature(funcion).parameters.keys()
-            metodos_con_parametros.append(f"{nombre}({', '.join(parametros)})")
-        return ", ".join(metodos_con_parametros)
     
     def construir_respuesta(self, xml):
         # Construye la respuesta HTTP completa
@@ -180,8 +162,6 @@ class Server:
 
         return header.decode(), cuerpo.decode()
 
-
-
     # Funcion que se ejecuta en un hilo para atender a un cliente
     def atender_cliente(self, conn, addr):
         print(f"Atendiendo a: {addr}")
@@ -192,19 +172,6 @@ class Server:
                     header, xml_body = self.recibir_http(conn)
                 except ConnectionError:
                     break
-                
-                # Recibir datos del cliente.
-                #data = conn.recv(4096)
-                #if not data:
-                    
-                    # El cliente cerro la conexión, hay que salir del bucle
-                #    break
-                
-                # procesar la solicitud
-                #data = data.decode()
-                
-                # Separar las cabeceras del cuerpo del mensaje HTTP
-                #header, xml_body = data.split('\r\n\r\n', 1)
                 
                 # Procesar el XML del cuerpo (<methodCall> del cliente)
                 

@@ -1,79 +1,54 @@
 from xmlrpc_redes import connect
+import hashlib
 
-conn = connect("127.0.0.1", 5000)
-
-while(True):
-    print("Opciones disponibles:")
+def probar(mensaje, funcion, *args):
+    print(f"\n>>> {mensaje}")
     try:
-        metodos = conn.listarMetodos()
-        metodos = metodos.split(",")
-        metodos = [m.strip() for m in metodos]
-        metodos = ", ".join(metodos)
-        print(metodos + "\n")
-
+        resultado = funcion(*args)
+        print(f"Resultado: {resultado}")
     except Exception as e:
-        print("Error al recuperar métodos:", e)
-        exit(1)
+        print(f"ERROR capturado: {e}")
 
-    print("Para salir escriba exit\n")
-    entrada = input("Ingrese operacion:")
-    if (entrada.lower() == "exit"):
-        conn.socket.close()
-        break
+def main():
+    conn = connect("127.0.0.1", 5000)
+
+    # 1. Probar suma
+    probar("suma(2, 3)", conn.suma, 2, 3)
+    probar("suma(2, 'tres')", conn.suma, 2, "tres")
+    probar("suma(2)", conn.suma, 2)
+    probar("suma(1,2,3)", conn.suma, 1, 2, 3)
+
+    # 2. Probar multiplicar
+    probar("multiplicar(2, 3, 4)", conn.multiplicar, 2, 3, 4)
+    probar("multiplicar(2.5,3,4)", conn.multiplicar, 2.5, 3, 4)
+
+    # 3. Probar es_multiplo
+    probar("es_multiplo(4,2)", conn.es_multiplo, 4, 2)
+    probar("es_multiplo(5,3)", conn.es_multiplo, 5, 3)
+
+    # 4. Probar saludar
+    probar("saludar()", conn.saludar)
+    probar("saludar(extra)", conn.saludar, "extra")
+
+    # 5. Probar eco con texto largo
+
+    probar("eco('Hola')", conn.eco, "hola")
+
+    texto = " ".join(["palabra"] * 25000)
+    print(f"\n>>> Eco con texto de {len(texto.split())} palabras")
+    resultado = conn.eco(texto)
+    hash_original = hashlib.md5(texto.encode()).hexdigest()
+    hash_retorno = hashlib.md5(resultado.encode()).hexdigest()
+    print("Coinciden los hashes?", hash_original == hash_retorno)
+    print("Coinciden los tamaños?", len(texto.split()) == len(resultado.split())) 
+
+    # 6. Probar eco con dato incorrecto
+    probar("eco(1234)", conn.eco, 1234)
     
-    try:
-        # Separar el nombre del método y los argumentos
-        partes = entrada.split('(', 1)
-        nombre_metodo = partes[0]
-        
-        if len(partes) > 1:
-            args_str = partes[1].strip(')')
-            args_list = []
-            if args_str:
-                for a in args_str.split(','):
-                    valor = a.strip()
-                    # Verifica si el argumento es una cadena (comienza y termina con comillas)
-                    #if (valor.startswith("'") and valor.endswith("'")) or (valor.startswith('"') and valor.endswith('"')):
-                    #    args_list.append(valor.strip("'").strip('"'))
-                    #elif valor.isdigit():
-                        # Si no, lo trata como un entero
-                    #    args_list.append(int(valor))
-                    #else:
-                    #    args_list.append(valor)
-         
-                    # Si está entre comillas, es string literal
-                    if (valor.startswith("'") and valor.endswith("'")) or (valor.startswith('"') and valor.endswith('"')):
-                        args_list.append(valor.strip("'").strip('"'))
-                    else:
-                        # Intento primero int, luego float, y si nada funciona lo dejo como string
-                        try:
-                            args_list.append(int(valor))
-                        except ValueError:
-                            try:
-                                args_list.append(float(valor))
-                            except ValueError:
-                                args_list.append(valor)  # se envía como string                            
-                args = args_list
-            else:
-                args = []
-        else:
-            args = []
+    # 7. Probar request a método no existente
+    probar("funcion_secreta(666, 23, 10)", conn.funcion_secreta, 666, 23, 10)
+    
+    conn.socket.close()
 
-#esto es una cadena de soluciones, primero daba un error rarisimo si la entrada no tenia parentesis
-#porque eval ejecutaba como codigo conn.ejemplo y se rompia
-#Para solucionar esto separe la entrada entre nombre de metodo y parametros
-
-#Ahi daba error si ponias una funcion sin parametros "resta()" porque el codigo tomaba como int al string ''
-#Otro error que habia era que no tomaba ningun valor string (no se podia ejecutar esPrefijo)
-#solucionado con if valor.startswith("'")
-            
-        # Llamar al método dinámicamente
-        metodo_remoto = getattr(conn, nombre_metodo)
-        
-        resultado = metodo_remoto(*args)
-        
-        print(f"\nResultado: {resultado}\n")
-    except AttributeError:
-        print("\nERROR: El método ingresado no existe.\n")
-    except Exception as e:
-        print(f"\nERROR: - {e}\n")
+if __name__ == "__main__":
+    main()
