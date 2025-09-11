@@ -1,4 +1,5 @@
 from xmlrpc_redes import connect
+
 import hashlib
 
 conn = connect("127.0.0.1", 5000)
@@ -21,4 +22,3 @@ print("Original: ", len(texto.split()))
 print("Resultado:", len(resultado.split()))
 
 print("El resultado fue: \n")
-print(resultado)

@@ -38,7 +38,7 @@ def eco(cadena):
         raise TypeError(f"El tipo de parámetro de 'cadena' es incorrecto, se esperaba un string y se encontró un {type(cadena).__name__}")
     return cadena
 
-server = Server("150.150.0.2", 5000)
+server = Server("127.0.0.1", 5000)
 server.add_method(suma)
 server.add_method(multiplicar)
 server.add_method(es_multiplo)

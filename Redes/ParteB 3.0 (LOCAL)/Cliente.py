@@ -10,7 +10,7 @@ def probar(mensaje, funcion, *args):
         print(f"ERROR capturado: {e}")
 
 def main():
-    conn = connect("150.150.0.2", 5000)
+    conn = connect("127.0.0.1", 5000)
 
     # 1. Probar suma
     probar("suma(2, 3)", conn.suma, 2, 3)
@@ -42,7 +42,7 @@ def main():
     print("Coinciden los hashes?", hash_original == hash_retorno)
     print("Coinciden los tamaños?", len(texto.split()) == len(resultado.split())) 
 
-    texto = " ".join(["palabra"] * 25000)
+    texto = " ".join(["palabra"] * 20000)
     print(f"\n>>> Eco con texto de {len(texto.split())} palabras")
     resultado = conn.eco(texto)
     hash_original = hashlib.md5(texto.encode()).hexdigest()
@@ -55,10 +55,8 @@ def main():
     
     # 7. Probar request a método no existente
     probar("funcion_secreta(666, 23, 10)", conn.funcion_secreta, 666, 23, 10)
-    
-    conn.socket.close()
 
-    conn = connect("100.100.0.2", 5001)
+    conn = connect("127.0.0.1", 5001)
 
     # 1. Probar resta
     probar("resta(10,3)", conn.resta, 10, 3)
@@ -94,9 +92,6 @@ def main():
 
     # 6. Probar request a método no existente
     probar("funcion_secreta(666, 23, 10)", conn.funcion_secreta, 666, 23, 10)
-    
-
-    conn.socket.close()
 
 if __name__ == "__main__":
     main()

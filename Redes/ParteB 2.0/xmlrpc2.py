@@ -104,23 +104,18 @@ def connect(address, port):
     
 class Server:
     def __init__(self, address, port):
-        # Inicializa el servidor, enlaza y escucha en el puerto especificado.
         self.address = address
         self.port = port
         self.metodos = {}
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.bind((address, port)) #recibe una tupla (address, port)
+        self.socket.bind((address, port))
         self.socket.listen(5)
-
         print(f"Servidor escuchando en {self.address}:{self.port}")
 
-    def add_method(self, proc1):
-            # Registra un metodo para ser llamado remotamente
-            self.metodos[proc1.__name__] = proc1
+    def add_method(self, proc):
+        self.metodos[proc.__name__] = proc
 
-    
     def construir_respuesta(self, xml):
-        # Construye la respuesta HTTP completa
         content_length = len(xml.encode())
         headers = (
             "HTTP/1.1 200 OK\r\n"
@@ -132,9 +127,8 @@ class Server:
             "\r\n"
         )
         return headers + xml
-    
+
     def recibir_http(self, conn):
-        # Leer hasta encontrar el final de los headers (hasta \r\n\r\n)
         data = b""
         while b"\r\n\r\n" not in data:
             chunk = conn.recv(4096)
@@ -142,141 +136,97 @@ class Server:
                 raise ConnectionError("Conexión cerrada antes de recibir headers")
             data += chunk
 
-        #Separo headers del resto
         header, resto = data.split(b"\r\n\r\n", 1)
-
-        # Busco Content-Length
         headers = header.decode().split("\r\n")
         content_length = 0
         for h in headers:
             if h.lower().startswith("content-length:"):
                 content_length = int(h.split(":", 1)[1].strip())
 
-        # Sigo leyendo hasta completar el cuerpo entero
         cuerpo = resto
-        
-        #debug:
-        print(f"Esperando {content_length} bytes, ya tengo {len(resto)}")
-        
         while len(cuerpo) < content_length:
             chunk = conn.recv(4096)
             if not chunk:
-                raise ConnectionError("Conexión cerrada antes de recibir el cuerpo completo")
+                raise ConnectionError("Conexión cerrada antes de recibir cuerpo completo")
             cuerpo += chunk
-
-            #debug:
-            print(f"Recibidos {len(cuerpo)}/{content_length}")
-            
         return header.decode(), cuerpo.decode()
 
-    # Funcion que se ejecuta en un hilo para atender a un cliente
     def atender_cliente(self, conn, addr):
         print(f"Atendiendo a: {addr}")
         try:
-            while True:  # Mantener la conexión abierta para múltiples solicitudes
-                
+            while True:
                 try:
                     header, xml_body = self.recibir_http(conn)
                 except ConnectionError as e:
-                     # Error de comunicación
-                    respuesta_xml = mensaje_fault(5, f"Otros errores: {e}")
-                    respuesta_http = self.construir_respuesta(respuesta_xml)
-                    conn.sendall(respuesta_http.encode())
-                    break  # corto la conexión
-                        
-                
-                # Procesar el XML del cuerpo (<methodCall> del cliente)
-                
-                try:       
-                    root = ET.fromstring(xml_body)
-                except ET.ParseError as e:
-                    respuesta_xml = mensaje_fault(1, f"Error de parseo XML")
-                    respuesta_http = self.construir_respuesta(respuesta_xml)
-                    conn.sendall(respuesta_http.encode())
-                    continue
+                    fault = mensaje_fault(5, f"Error de conexión: {e}")
+                    conn.sendall(self.construir_respuesta(fault).encode())
+                    break
 
-                method_name = root.find('methodName').text
-                
-                # Extraer los parametros
-                params = []
-                params_node = root.find('params')    
-                if params_node is not None:
-                    for param_node in params_node.findall('param'):
-                        value_node = param_node.find('value')
-                        if value_node is not None:
-                            int_node = value_node.find('int')
-                            string_node = value_node.find('string')
-                            if int_node is not None:
-                                params.append(int(int_node.text))
-                            elif string_node is not None:
-                                params.append(string_node.text)
-                            else:
-                                respuesta_xml = mensaje_fault(3, f"Error en parámetros del método invocado.")
-                                respuesta_http = self.construir_respuesta(respuesta_xml)
-                                conn.sendall(respuesta_http.encode())
-                                continue
+                # Procesar XML en un hilo separado
+                threading.Thread(target=self.ejecutar_metodo, args=(conn, xml_body)).start()
 
-                # Identificar el metodo solicitado
-                if method_name not in self.metodos:
-                    respuesta_xml = mensaje_fault(2, f"No existe el método invocado: '{method_name}'")
-                else:
-                    try:    
-                        # Ejecutar el metodo
-                        
-                        result = self.metodos[method_name](*params)
-                        
-                        if isinstance(result, int):
-                            respuesta_xml = f"""<?xml version="1.0"?>
-    <methodResponse>
-    <params>
-        <param>
-            <value><int>{result}</int></value>
-        </param>
-    </params>
-    </methodResponse>"""
-                        else: # Se asume que es string para los demás casos
-                            respuesta_xml = f"""<?xml version="1.0"?>
-    <methodResponse>
-    <params>
-        <param>
-            <value><string>{result}</string></value>
-        </param>
-    </params>
-    </methodResponse>"""
-                    except TypeError as e:
-                       # Captura errores de parámetros (ej. número incorrecto de argumentos)
-                        respuesta_xml = mensaje_fault(3, f"Error en parámetros del método: {e}")
-                    except Exception as e:
-                        # Captura cualquier otra falla interna (ej. dividir por cero)
-                        respuesta_xml = mensaje_fault(4, f"Error interno en la ejecución del método: {e}")
-                        
-                # Enviar la respuesta al cliente
-                respuesta_http = self.construir_respuesta(respuesta_xml)
-                conn.sendall(respuesta_http.encode())
-
-        except Exception as e:
-            # Manejo de errores fatales fuera del bucle.
-            respuesta_xml = mensaje_fault(5, f"Otros errores: {e}")
-            respuesta_http = self.construir_respuesta(respuesta_xml)
-            try: #Lo pongo como try por si, por alguna razón, ya se cerró la conexión antes de mandar el último mensaje
-                conn.sendall(respuesta_http.encode())
-            except:
-                pass #Si pasó lo de arriba, simplemente ignoro
-        
-        # finally cierra la conexión una vez que el bucle while haya terminado (exit)
         finally:
             conn.close()
             print(f"Conexión terminada con {addr}")
 
+    def ejecutar_metodo(self, conn, xml_body):
+        try:
+            root = ET.fromstring(xml_body)
+        except ET.ParseError:
+            fault = mensaje_fault(1, "Error de parseo XML")
+            conn.sendall(self.construir_respuesta(fault).encode())
+            return
+
+        method_name = root.find('methodName').text
+        params = []
+
+        params_node = root.find('params')
+        if params_node is not None:
+            for param_node in params_node.findall('param'):
+                value_node = param_node.find('value')
+                if value_node is not None:
+                    if value_node.find('int') is not None:
+                        params.append(int(value_node.find('int').text))
+                    elif value_node.find('string') is not None:
+                        params.append(value_node.find('string').text)
+                    else:
+                        fault = mensaje_fault(3, "Parámetro no soportado")
+                        conn.sendall(self.construir_respuesta(fault).encode())
+                        return
+
+        if method_name not in self.metodos:
+            fault = mensaje_fault(2, f"No existe el método '{method_name}'")
+            conn.sendall(self.construir_respuesta(fault).encode())
+            return
+
+        try:
+            result = self.metodos[method_name](*params)
+            if isinstance(result, int):
+                xml_resp = f"""<?xml version="1.0"?>
+<methodResponse>
+<params>
+<param><value><int>{result}</int></value></param>
+</params>
+</methodResponse>"""
+            else:
+                xml_resp = f"""<?xml version="1.0"?>
+<methodResponse>
+<params>
+<param><value><string>{result}</string></value></param>
+</params>
+</methodResponse>"""
+        except Exception as e:
+            xml_resp = mensaje_fault(4, f"Error interno: {e}")
+
+        conn.sendall(self.construir_respuesta(xml_resp).encode())
+
     def serve(self):
-        # Bucle para aceptar nuevas conexiones de clientes
         while True:
             conn, addr = self.socket.accept()
             print(f"Conexión aceptada de {addr}")
-            
-            # Hilo para atender a cada cliente
-            client_thread = threading.Thread(target=self.atender_cliente, args=(conn, addr))
-            client_thread.start()
+            threading.Thread(target=self.atender_cliente, args=(conn, addr)).start()
+
+
             
 # Constructor de fault message
 def mensaje_fault(code, message):
@@ -296,4 +246,4 @@ def mensaje_fault(code, message):
          </struct>
       </value>
    </fault>
-</methodResponse> \n"""
+</methodResponse>"""

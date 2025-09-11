@@ -52,7 +52,7 @@ def esperarDiezMas(segundos):
     resultado = (f"Ya pasaron los {10+segundos} segundos de espera")
     return resultado
 
-server = Server("100.100.0.2", 5001)
+server = Server("127.0.0.1", 5001)
 server.add_method(resta)
 server.add_method(dividir)
 server.add_method(esPrefijo)
