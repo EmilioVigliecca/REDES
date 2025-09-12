@@ -10,9 +10,8 @@ def probar(mensaje, funcion, *args):
         print(f"ERROR capturado: {e}")
 
 def main():
-    
-    try:
-        conn = connect("150.150.0.2", 5000)
+    try: 
+        conn = connect("127.0.0.1", 5000)
 
         # 1. Probar suma
         probar("suma(2, 3)", conn.suma, 2, 3)
@@ -52,6 +51,13 @@ def main():
         print("Coinciden los hashes?", hash_original == hash_retorno)
         print("Coinciden los tamaños?", len(texto.split()) == len(resultado.split())) 
 
+        texto = " ".join(["palabra"] * 25000)
+        print(f"\n>>> Eco con texto de {len(texto.split())} palabras")
+        resultado = conn.eco(texto)
+        hash_original = hashlib.md5(texto.encode()).hexdigest()
+        hash_retorno = hashlib.md5(resultado.encode()).hexdigest()
+        print("Coinciden los hashes?", hash_original == hash_retorno)
+        print("Coinciden los tamaños?", len(texto.split()) == len(resultado.split())) 
 
         # 6. Probar eco con dato incorrecto
         probar("eco(1234)", conn.eco, 1234)
@@ -63,9 +69,8 @@ def main():
     except Exception as e:
         print (f"ERROR: Conexión cerrada con {conn.server_address}, puerto {conn.server_port}")
    
-    try:
-
-        conn = connect("100.100.0.2", 5001)
+    try:    
+        conn = connect("127.0.0.1", 5001)
 
         # 1. Probar resta
         probar("resta(10,3)", conn.resta, 10, 3)

@@ -1,10 +1,10 @@
 from xmlrpc_redes import connect
 import hashlib
 
-conn = connect("150.150.0.2", 5000)
+conn = connect("127.0.0.1", 5000)
 
-# Generar un string con 25.000 palabras
-texto = " ".join(["palabra"] * 25000)
+# Generar un string con 20.000 palabras
+texto = " ".join(["palabra"] * 20500)
 
 print("Texto generado con", len(texto.split()), "palabras")
 
@@ -19,3 +19,6 @@ print("Coinciden los hashes?", hash_original == hash_retorno)
 print("Original: ", len(texto.split()))
 
 print("Resultado:", len(resultado.split()))
+
+print("El resultado fue: \n")
+print(resultado)

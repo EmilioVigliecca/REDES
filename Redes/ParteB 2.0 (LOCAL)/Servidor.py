@@ -50,7 +50,7 @@ def esperarDiezMas(segundos):
     return resultado
 
 
-server = Server("150.150.0.2", 5000)
+server = Server("127.0.0.1", 5000)
 server.add_method(suma)
 server.add_method(multiplicar)
 server.add_method(es_multiplo)
