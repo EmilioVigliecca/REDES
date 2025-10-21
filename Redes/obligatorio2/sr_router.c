@@ -79,6 +79,72 @@ void sr_handle_ip_packet(struct sr_instance *sr,
   * - No olvide imprimir los mensajes de depuración
   */
 
+      //Cabezal:
+      unsigned int eth_hdr_len = sizeof(sr_ethernet_hdr_t);
+      sr_ip_hdr_t *ip_hdr = (sr_ip_hdr_t *)(packet + eth_hdr_len);
+
+      unsigned int ip_hdr_len = ip_hdr->ip_hl * 4;
+      unsigned int ip_pkt_len = ntohs(ip_hdr->ip_len);
+      unsigned int total_pkt_len = eth_hdr_len + ip_pkt_len;
+      
+      // Verificar si el paquete es para una de mis interfaces
+      struct sr_if *coincide = sr_get_interface_given_ip(sr, ip_hdr->ip_dst);
+      if(coincide){
+        printf("Paquete IP destinado al router: %s.\n", coincide->name);
+        //verificar si es un paquete ICMP 
+        if (ip_hdr->ip_p == ip_protocol_icmp){
+          
+            // Obtener encabezado ICMP 
+            sr_icmp_hdr_t *icmp_hdr = (sr_icmp_hdr_t *)((uint8_t *)ip_hdr + ip_hdr_len);
+            unsigned int icmp_data_len = ip_pkt_len - ip_hdr_len;
+
+            //verificar si es un echo request
+            if (icmp_hdr->icmp_type == 8 && icmp_hdr->icmp_code == 0) {
+              printf("Se recibió un ICMP Echo Request.\n");
+              
+              //responder con un echo reply
+              
+              //Armar el paquete
+              uint8_t *pkt_reply = (uint8_t *)malloc(total_pkt_len);
+              memcpy(pkt_reply, packet, total_pkt_len);
+              
+              sr_ethernet_hdr_t *eth_reply_hdr = (sr_ethernet_hdr_t *)pkt_reply;
+              sr_ip_hdr_t *ip_reply_hdr = (sr_ip_hdr_t *)(pkt_reply + eth_hdr_len);
+              sr_icmp_hdr_t *icmp_reply_hdr = (sr_icmp_hdr_t *)((uint8_t *)ip_reply_hdr + ip_hdr_len);
+              
+              // Encabezado Ethernet (Invertir MACs)
+              memcpy(eth_reply_hdr->ether_dhost, eHdr->ether_shost, ETHER_ADDR_LEN);
+              memcpy(eth_reply_hdr->ether_shost, coincide->addr, ETHER_ADDR_LEN);
+              
+              // Encabezado IP (Invertir IPs, TTL y Checksum)
+              uint32_t temp_ip = ip_reply_hdr->ip_src;
+              ip_reply_hdr->ip_src = ip_reply_hdr->ip_dst;
+              ip_reply_hdr->ip_dst = temp_ip;
+
+
+              ip_reply_hdr->ip_ttl = 64; // TTL default, no sé si elegir este
+              ip_reply_hdr->ip_sum = 0; 
+              ip_reply_hdr->ip_sum = ip_cksum(ip_reply_hdr, ip_hdr_len);
+
+              // Encabezado ICMP (Cambiar Tipo/Código y Checksum)
+              icmp_reply_hdr->icmp_type = 0; // Tipo 0 (Reply)
+              icmp_reply_hdr->icmp_code = 0;
+                
+              icmp_reply_hdr->icmp_sum = 0; 
+              icmp_reply_hdr->icmp_sum = icmp_cksum(icmp_reply_hdr, icmp_data_len);
+              
+              // Enviar
+              print_hdrs(pkt_reply, total_pkt_len);
+              sr_send_packet(sr, pkt_reply, total_pkt_len, interface);
+              free(pkt_reply);
+            } else {
+              //Otros tipos de ICMP
+              printf("Paquete ICMP recibido, pero no un Echo Request. Descartar.\n");
+            }
+        
+        }  else{
+        }
+      }
 }
 
 /* Gestiona la llegada de un paquete ARP*/
