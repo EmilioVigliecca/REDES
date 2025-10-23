@@ -9,6 +9,7 @@
 #include "sr_arpcache.h"
 #include "sr_router.h"
 #include "sr_if.h"
+#include "sr_rt.h"
 #include "sr_protocol.h"
 #include "sr_utils.h"
 
@@ -46,9 +47,35 @@ void handle_arpreq(struct sr_instance *sr, struct sr_arpreq *req) {
     /* COLOQUE SU CÓDIGO AQUÍ */
 }
 
-/* Envía un mensaje ICMP host unreachable a los emisores de los paquetes esperando en la cola de una solicitud ARP */
+/* 
+Envía un mensaje ICMP host unreachable (Tipo 3, Código 1) a los emisores 
+de los paquetes esperando en la cola de una solicitud ARP fallida (osea repite 5 veces)
+*/
 void host_unreachable(struct sr_instance *sr, struct sr_arpreq *req) {
-    /* COLOQUE SU CÓDIGO AQUÍ */
+    Debug("-> ARP request falló 5 veces para IP %s. Mando los host unreachable \n", ip_to_str(req->ip));
+
+    /*Agarras el primer paquete en la lista enlazada */
+    struct sr_packet *packet = req->packets;
+
+    /*Iteras sobre todos los paquetes que estaban esperando respuesta ARP */
+    while (packet) {
+        Debug("Envia ICMP (3,1) al emisor del paquete en cola (len: %d)\n", packet->len);
+        
+        
+        //Llama a esta otra función que también la hicimos nosotros
+        sr_send_icmp_error_packet(
+            3,                      //ICMP Type: destination unreachable
+            1,                      //ICMP Code: host unreachable (queda icmp 3,1)
+            sr,
+            packet->len,            //uint32_t: Longitud del paquete original
+            packet->buf             //uint8_t*:  Buffer del paquete original
+        );
+        
+        //Itera al siguiente paquete
+        packet = packet->next;
+    }
+    
+    //Asumo que la otra función que la llama se encarga de liberar recs y los paquetes, no esta :)
 }
 
 /* NO DEBERÍA TENER QUE MODIFICAR EL CÓDIGO A PARTIR DE AQUÍ. */
