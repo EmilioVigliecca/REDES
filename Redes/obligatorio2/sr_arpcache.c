@@ -44,8 +44,38 @@ void sr_arp_request_send(struct sr_instance *sr, uint32_t ip) {
   - no olvide actualizar los campos de la solicitud luego de reenviarla
 */
 void handle_arpreq(struct sr_instance *sr, struct sr_arpreq *req) {
-    /* COLOQUE SU CÓDIGO AQUÍ */
+    //No va con un loop ni nada pq sr_arpcache_sweepreqs, que la hicieron ellos, 
+    //Se encarga de ir llamandola cada segundo, según dice en el comentario de la función
+    time_t now = time(NULL); //Hora actual
+
+    //Verificar si ya falló 5 veces, y entonces hay que dejar que host unreachable se encargue
+    //Y borrar también los paquetes
+    if (req->times_sent >= 5) {
+
+        Debug("--> Llamo a host unreachable, fallo 5 veces\n");
+        host_unreachable(sr, req); 
+        
+        //Liberas memoria, borras los paquetes de la cache y eso
+        sr_arpreq_destroy(&(sr->cache), req);
+
+        return;
+    }
+
+    //Ve si es el primer envio o si ha pasado más de un segundo desde el último
+    if (req->sent == 0 || difftime(now, req->sent) > 1.0) {
+        //Reenvias solicitud ARP, como todavía son menos de 5
+        Debug("--> Reenviando ARP para %s (intento %d).\n", ip_to_str(req->ip), req->times_sent + 1);
+        
+        sr_arp_request_send(sr, req->ip);
+        
+        /* Actualizar los campos de la solicitud */
+        req->sent = now;
+        req->times_sent++;
+    }
+    
+    //Si no paso un segundo no hace nada, solo espera
 }
+
 
 /* 
 Envía un mensaje ICMP host unreachable (Tipo 3, Código 1) a los emisores 
