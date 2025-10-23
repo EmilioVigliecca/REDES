@@ -30,6 +30,74 @@ void sr_arp_request_send(struct sr_instance *sr, uint32_t ip) {
   * - Construya el cabezal ARP y envíe el paquete
   */
   
+  //obtener interfaz de salida
+
+  //hacer LPM
+  struct sr_rt *rt_entry = sr_lpm_lookup(sr, ip);
+  if (!rt_entry) {
+        printf("ERROR ARP Request: No se encontró ruta para la IP %s. No se puede enviar ARP Request.\n", 
+                inet_ntoa( (struct in_addr){.s_addr = ip} ));
+        return;
+  }
+
+  //obtener interfaz
+  struct sr_if *iface_out = sr_get_interface(sr, rt_entry->interface);
+    if (!iface_out) {
+        // no deberia pasar
+        fprintf(stderr, "ERROR ARP Request: Interfaz de salida '%s' no encontrada.\n", rt_entry->interface);
+        return;
+    }
+
+  //crear el encabezado ethernet
+  unsigned int tam_request = sizeof(sr_ethernet_hdr_t) + sizeof(sr_arp_hdr_t);
+  uint8_t *pkt_request = (uint8_t *)malloc(tam_request);
+  
+  if (!pkt_request) {
+        fprintf(stderr, "Error: Fallo al asignar memoria para ARP Request.\n");
+        return;
+    }
+  memset(pkt_request, 0, tam_request);
+
+  sr_ethernet_hdr_t *eth_req = (sr_ethernet_hdr_t *)pkt_request;
+  sr_arp_hdr_t *arp_req = (sr_arp_hdr_t *)(pkt_request + sizeof(sr_ethernet_hdr_t));
+  
+  //MAC destino (broadcast)
+  uint8_t mac_broadcast[ETHER_ADDR_LEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+  memcpy(eth_req->ether_dhost, mac_broadcast, ETHER_ADDR_LEN);
+
+  //MAC origen
+  memcpy(eth_req->ether_shost, iface_out->addr, ETHER_ADDR_LEN);
+
+  //tipo (ARP)
+  eth_req->ether_type = htons(ethertype_arp);
+
+  //encabezado ARP
+  arp_req->ar_hrd = htons(arp_hrd_ethernet); 
+  arp_req->ar_pro = htons(ethertype_ip);     
+  arp_req->ar_hln = ETHER_ADDR_LEN;          
+  arp_req->ar_pln = 4;
+
+  arp_req->ar_op = htons(arp_op_request);
+
+  //SHA y SIP. MAC e IP de la interfaz de salida
+  memcpy(arp_req->ar_sha, iface_out->addr, ETHER_ADDR_LEN);
+  arp_req->ar_sip = iface_out->ip;
+
+  //MAC destino. 0 porque es desconocida
+  uint8_t mac_unknown[ETHER_ADDR_LEN] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+  memcpy(arp_req->ar_tha, mac_unknown, ETHER_ADDR_LEN);
+  
+  //IP de la Mac que se busca
+  arp_req->ar_tip = ip;
+
+  //mandar paquete
+  printf("Enviando ARP Request por %s para resolver %s\n", 
+      iface_out->name, 
+      inet_ntoa( (struct in_addr){.s_addr = ip} ));       
+  sr_send_packet(sr, pkt_request, tam_request, iface_out->name);
+
+  free(pkt_request);
+
   printf("$$$ -> Send ARP request processing complete.\n");
 }
 
