@@ -30,9 +30,9 @@ void sr_arp_request_send(struct sr_instance *sr, uint32_t ip) {
   * - Construya el cabezal ARP y envíe el paquete
   */
   
-  //obtener interfaz de salida
+  /*obtener interfaz de salida*/
 
-  //hacer LPM
+  /*hacer LPM*/
   struct sr_rt *rt_entry = sr_lpm_lookup(sr, ip);
   if (!rt_entry) {
         printf("ERROR ARP Request: No se encontró ruta para la IP %s. No se puede enviar ARP Request.\n", 
@@ -40,7 +40,7 @@ void sr_arp_request_send(struct sr_instance *sr, uint32_t ip) {
         return;
   }
 
-  //obtener interfaz
+  /*obtener interfaz*/
   struct sr_if *iface_out = sr_get_interface(sr, rt_entry->interface);
     if (!iface_out) {
         // no deberia pasar
@@ -48,7 +48,7 @@ void sr_arp_request_send(struct sr_instance *sr, uint32_t ip) {
         return;
     }
 
-  //crear el encabezado ethernet
+  /*crear el encabezado ethernet*/
   unsigned int tam_request = sizeof(sr_ethernet_hdr_t) + sizeof(sr_arp_hdr_t);
   uint8_t *pkt_request = (uint8_t *)malloc(tam_request);
   
@@ -61,17 +61,17 @@ void sr_arp_request_send(struct sr_instance *sr, uint32_t ip) {
   sr_ethernet_hdr_t *eth_req = (sr_ethernet_hdr_t *)pkt_request;
   sr_arp_hdr_t *arp_req = (sr_arp_hdr_t *)(pkt_request + sizeof(sr_ethernet_hdr_t));
   
-  //MAC destino (broadcast)
+  /*MAC destino (broadcast)*/
   uint8_t mac_broadcast[ETHER_ADDR_LEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
   memcpy(eth_req->ether_dhost, mac_broadcast, ETHER_ADDR_LEN);
 
-  //MAC origen
+  /*MAC origen*/
   memcpy(eth_req->ether_shost, iface_out->addr, ETHER_ADDR_LEN);
 
-  //tipo (ARP)
+  /*tipo (ARP)*/
   eth_req->ether_type = htons(ethertype_arp);
 
-  //encabezado ARP
+  /*encabezado ARP*/
   arp_req->ar_hrd = htons(arp_hrd_ethernet); 
   arp_req->ar_pro = htons(ethertype_ip);     
   arp_req->ar_hln = ETHER_ADDR_LEN;          
@@ -79,18 +79,18 @@ void sr_arp_request_send(struct sr_instance *sr, uint32_t ip) {
 
   arp_req->ar_op = htons(arp_op_request);
 
-  //SHA y SIP. MAC e IP de la interfaz de salida
+  /*SHA y SIP. MAC e IP de la interfaz de salida*/
   memcpy(arp_req->ar_sha, iface_out->addr, ETHER_ADDR_LEN);
   arp_req->ar_sip = iface_out->ip;
 
-  //MAC destino. 0 porque es desconocida
+  /*MAC destino. 0 porque es desconocida*/
   uint8_t mac_unknown[ETHER_ADDR_LEN] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
   memcpy(arp_req->ar_tha, mac_unknown, ETHER_ADDR_LEN);
   
-  //IP de la Mac que se busca
+  /*IP de la Mac que se busca*/
   arp_req->ar_tip = ip;
 
-  //mandar paquete
+  /*mandar paquete*/
   printf("Enviando ARP Request por %s para resolver %s\n", 
       iface_out->name, 
       inet_ntoa( (struct in_addr){.s_addr = ip} ));       
@@ -112,12 +112,12 @@ void sr_arp_request_send(struct sr_instance *sr, uint32_t ip) {
   - no olvide actualizar los campos de la solicitud luego de reenviarla
 */
 void handle_arpreq(struct sr_instance *sr, struct sr_arpreq *req) {
-    //No va con un loop ni nada pq sr_arpcache_sweepreqs, que la hicieron ellos, 
-    //Se encarga de ir llamandola cada segundo, según dice en el comentario de la función
+    /*No va con un loop ni nada pq sr_arpcache_sweepreqs, que la hicieron ellos, 
+    Se encarga de ir llamandola cada segundo, según dice en el comentario de la función*/
     time_t now = time(NULL); //Hora actual
 
-    //Verificar si ya falló 5 veces, y entonces hay que dejar que host unreachable se encargue
-    //Y borrar también los paquetes
+    /*Verificar si ya falló 5 veces, y entonces hay que dejar que host unreachable se encargue
+    Y borrar también los paquetes*/
     if (req->times_sent >= 5) {
 
         Debug("--> Llamo a host unreachable, fallo 5 veces\n");
@@ -129,7 +129,7 @@ void handle_arpreq(struct sr_instance *sr, struct sr_arpreq *req) {
         return;
     }
 
-    //Ve si es el primer envio o si ha pasado más de un segundo desde el último
+    /*Ve si es el primer envio o si ha pasado más de un segundo desde el último*/
     if (req->sent == 0 || difftime(now, req->sent) > 1.0) {
         //Reenvias solicitud ARP, como todavía son menos de 5
         Debug("--> Reenviando ARP para %s (intento %d).\n", ip_to_str(req->ip), req->times_sent + 1);
@@ -141,7 +141,7 @@ void handle_arpreq(struct sr_instance *sr, struct sr_arpreq *req) {
         req->times_sent++;
     }
     
-    //Si no paso un segundo no hace nada, solo espera
+    /*Si no paso un segundo no hace nada, solo espera*/
 }
 
 
@@ -160,7 +160,7 @@ void host_unreachable(struct sr_instance *sr, struct sr_arpreq *req) {
         Debug("Envia ICMP (3,1) al emisor del paquete en cola (len: %d)\n", packet->len);
         
         
-        //Llama a esta otra función que también la hicimos nosotros
+        /*Llama a esta otra función que también la hicimos nosotros*/
         sr_send_icmp_error_packet(
             3,                      //ICMP Type: destination unreachable
             1,                      //ICMP Code: host unreachable (queda icmp 3,1)
@@ -169,11 +169,11 @@ void host_unreachable(struct sr_instance *sr, struct sr_arpreq *req) {
             packet->buf             //uint8_t*:  Buffer del paquete original
         );
         
-        //Itera al siguiente paquete
+        /*Itera al siguiente paquete*/
         packet = packet->next;
     }
     
-    //Asumo que la otra función que la llama se encarga de liberar recs y los paquetes, no esta :)
+    /*Asumo que la otra función que la llama se encarga de liberar recs y los paquetes, no esta :)*/
 }
 
 /* NO DEBERÍA TENER QUE MODIFICAR EL CÓDIGO A PARTIR DE AQUÍ. */
