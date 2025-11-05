@@ -104,15 +104,109 @@ void sr_handle_rip_packet(struct sr_instance* sr,
 {
     sr_rip_packet_t* rip_packet = (struct sr_rip_packet_t*)(packet + rip_off);
 
-    /* Validar paquete RIP */
+    /* 1 Validar paquete RIP */
 
-    /* Si es un RIP_COMMAND_REQUEST, enviar respuesta por la interfaz donde llegó, se sugiere usar función auxiliar sr_rip_send_response */
+    /* 2 Si es un RIP_COMMAND_REQUEST, enviar respuesta por la interfaz donde llegó, se sugiere usar función auxiliar sr_rip_send_response */
 
-    /* Si no es un REQUEST, entonces es un RIP_COMMAND_RESPONSE. En caso que no sea un REQUEST o RESPONSE no pasa la validación. */
+    /* 3 Si no es un REQUEST, entonces es un RIP_COMMAND_RESPONSE. En caso que no sea un REQUEST o RESPONSE no pasa la validación. */
     
-    /* Procesar entries en el paquete de RESPONSE que llegó, se sugiere usar función auxiliar sr_rip_update_route */
+    /* 4 Procesar entries en el paquete de RESPONSE que llegó, se sugiere usar función auxiliar sr_rip_update_route */
 
-    /* Si hubo un cambio en la tabla, generar triggered update e imprimir tabla */
+    /* 5 Si hubo un cambio en la tabla, generar triggered update e imprimir tabla */
+
+    sr_rip_packet_t* rip_packet = (struct sr_rip_packet_t*)(packet + rip_off);
+    
+    /* *Obtenemos la cabecera IP para saber quién envió el paquete
+     * Esto es crucial tanto para responder a un REQUEST (unicast)
+     * como para saber el 'next hop' en un RESPONSE.
+     */
+    sr_ip_hdr_t* ip_hdr = (sr_ip_hdr_t*)(packet + ip_off);
+    uint32_t src_ip = ip_hdr->ip_src;
+
+    /* Obtenemos la estructura de la interfaz por la que llegó */
+    struct sr_if* in_iface = sr_get_if(sr, in_ifname);
+    if (!in_iface) {
+        Debug("RIP: Paquete recibido en interfaz desconocida %s. Descartando.\n", in_ifname);
+        return;
+    }
+
+    /* 1 Validar paquete RIP */
+    if (!sr_rip_validate_packet(rip_packet, rip_len)) {
+        Debug("RIP: Paquete RIP inválido recibido. Descartando.\n");
+        return;
+    }
+
+    /* Procesar según si es REQUEST o RESPONSE */
+    if (rip_packet->command == RIP_COMMAND_REQUEST)
+    {
+        /* * 2 Si es un RIP_COMMAND_REQUEST, enviar respuesta
+         * por la interfaz donde llegó */
+        Debug("-> RIP: Recibió REQUEST en interfaz %s de %s. Enviando respuesta.\n",
+              in_ifname, inet_ntoa(*(struct in_addr*)&src_ip));
+
+        /* Usamos la función auxiliar para enviar la respuesta a la IP de origen, como sugiere arriba */
+        sr_rip_send_response(sr, in_iface, src_ip);
+    }
+    else if (rip_packet->command == RIP_COMMAND_RESPONSE)
+    {
+        /* * 3 Si es un RIP_COMMAND_RESPONSE, procesar las entradas
+         * Y si es otra cosa no pasa la validación */
+        Debug("-> RIP: Recibió RESPONSE en interfaz %s de %s. Procesando entradas.\n",
+              in_ifname, inet_ntoa(*(struct in_addr*)&src_ip));
+
+        int cambios = 0;
+        int num_entries = (rip_len - sizeof(sr_rip_packet_t)) / sizeof(sr_rip_entry_t);
+
+        /* * Bloque la tabla de enrutamiento para evitar que cambie mientras la estás revisando, 
+        Y estas viendo si cambia o no
+         */
+        pthread_mutex_lock(&rip_metadata_lock);
+
+        for (int i = 0; i < num_entries; i++)
+        {
+            struct sr_rip_entry_t* entry = &rip_packet->entries[i];
+            
+            /* * 4 Usamos la función auxiliar como dice arriba para procesar cada entrada de ruta.
+             * El 'neighbor_ip' (src_ip) es el router que nos anunció esta ruta.
+             */
+            int resultado = sr_rip_update_route(sr, entry, src_ip, in_ifname);
+            
+            if (resultado == 1) {
+                cambios = 1; /* Marcamos que la tabla cambió*/
+            }
+        }
+        
+        pthread_mutex_unlock(&rip_metadata_lock);
+
+        /* * 5 Si hubo un cambio en la tabla, generar triggered update 
+         * e imprimir la tabla.
+         */
+        if (cambios)
+        {
+            Debug("-> RIP: Tabla de enrutamiento cambió. Enviando triggered update.\n");
+
+            /* * Un "triggered update" es una respuesta a todos los vecinos avisando del cambio
+             * Envia un RESPONSE a la dirección multicast RIP_IP
+             * Osea a todas las interfaces
+             */
+            struct sr_if* if_walker = sr->if_list;
+            while (if_walker)
+            {
+                /* * La función sr_rip_send_response debe implementar la lógica de "split horizon"
+                 Que es lo de que 
+                 Un router nunca debe anunciar una ruta de vuelta 
+                 por la misma interfaz por la que la aprendió
+                 Pq si hace eso empieza a loopear hasta infinito
+                
+                */
+                sr_rip_send_response(sr, if_walker, htonl(RIP_IP));
+                if_walker = if_walker->next;
+            }
+
+            Debug("\n-> RIP: Imprimiendo tabla de enrutamiento luego de procesar:\n");
+            print_routing_table(sr);
+        }
+    }
 }
 
 void sr_rip_send_response(struct sr_instance* sr, struct sr_if* interface, uint32_t ipDst) {
