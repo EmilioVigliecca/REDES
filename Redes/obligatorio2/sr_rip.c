@@ -21,6 +21,10 @@
 #include "sr_rt.h"
 #include "sr_rip.h"
 
+#define SPLIT_HORIZON_POISONED_REVERSE_ENABLED 1 
+/*Pide en la letra que tengas un booleano para
+Apagar y prender esto*/
+
 #include "sr_utils.h"
 
 static pthread_mutex_t rip_metadata_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -57,12 +61,28 @@ int sr_rip_validate_packet(sr_rip_packet_t* packet, unsigned int len) {
     return 1;
 }
 
+/*ESTA FUNCIÓN LA AGREGUÉ PARA SIMPLIFICAR SR_RIP_UPDATE_ROUTE que es la LONGA FUNCIÓN*/
+static struct sr_rt* sr_rt_find_exact(struct sr_rt* rt_table, uint32_t dest, uint32_t mask)
+{
+    struct sr_rt* rt = rt_table;
+    while (rt)
+    {
+        if (rt->dest.s_addr == dest && rt->mask.s_addr == mask)
+        {
+            return rt;
+        }
+        rt = rt->next;
+    }
+    return NULL;
+}
+
 int sr_rip_update_route(struct sr_instance* sr,
                         const struct sr_rip_entry_t* rte,
                         uint32_t src_ip,
                         const char* in_ifname)
 {
     /*
+    ESTE ES EL COMENTARIO QUE PUSIERON ELLOS COMO GUÍA PARA LA FUNCIÓN, YA ESTABA
      * Procesa una entrada RIP recibida por una interfaz.
      *
 
@@ -91,8 +111,200 @@ int sr_rip_update_route(struct sr_instance* sr,
      *
      */
 
+    /*ES EN ESTA FUNCIÓN (UPDATE) QUE SE APLICA EL VECTOR DE DISTANCIA, 
+    ESTO HACE FUNCIONAR TODAS LAS TABLAS*/
+
+    time_t now = time(NULL);
+
+    /* 1 Obtener detalles de la entrada anunciada */
+    uint32_t dest_ip = rte->ip;
+    uint32_t dest_mask = rte->mask;
+    uint32_t announced_metric = ntohl(rte->metric);
+    uint16_t new_route_tag = rte->route_tag; /* Guardamos el route tag 
+    como se va a usar en send_response */
+    uint32_t new_gateway_ip = src_ip;
+
+    /* 2 Obtener la interfaz de entrada y su costo */
+    struct sr_if* in_iface = sr_get_if(sr, in_ifname);
+    if (!in_iface) {
+        Debug("RIP: Error al obtener la interfaz %s. Descartando entrada.\n", in_ifname);
+        return -1; /* Fallo al obtener la interfaz */
+    }
+    /* "El costo corresponde al atributo cost, no debe asumir que el costo siempre es 1" (de la letra) */
+    uint8_t if_cost = in_iface->cost ? in_iface->cost : 1;
+
+    /* 3 Buscar si ya tenemos una ruta *exacta* para este destino/máscara */
+    struct sr_rt* existing_route = sr_rt_find_exact(sr->routing_table, dest_ip, dest_mask);
+    
+    /* Una ruta es "dinámica" si fue aprendida de un vecino (learned_from != 0) */
+    int is_dynamic = (existing_route && existing_route->learned_from != 0);
+
+    
+     * REQUISITO 1: Si la métrica anunciada es >= 16 (INFINITO)
+     */
+    if (announced_metric >= RIP_METRIC_INFINITY)
+    {
+        /* Si existe una ruta coincidente aprendida *desde el mismo vecino*... */
+        if (is_dynamic && existing_route->learned_from == new_gateway_ip)
+        {
+            /* ...marca la ruta como inválida (si no lo estaba ya) */
+            if (existing_route->valid) {
+                Debug("RIP: Marcando ruta como inválida (vecino anunció INFINITO): %s/%s\n",
+                      inet_ntoa(existing_route->dest), inet_ntoa(existing_route->mask));
+                existing_route->metric = RIP_METRIC_INFINITY;
+                existing_route->valid = 0; /* Inválida = 0*/
+                existing_route->garbage_collection_time = now; /* Fija tiempo de G.C. */
+                return 1; /* La tabla fue modificada */
+            }
+        }
+        /* Si no, ignora el anuncio de infinito (vino de otro vecino, o no existía) */
+        return 0; /* No se realizaron cambios */
+    }
+
+    /*
+     * REQUISITO 2: Calcula la nueva métrica sumando el coste del enlace
+     */
+    uint32_t new_metric = announced_metric + if_cost;
+    
+    /* Si resulta >= 16, descarta la actualización. */
+    if (new_metric >= RIP_METRIC_INFINITY) {
+        /*Osea no normalizamos a 16, simplemente la descartamos */
+        return 0; /* No se realizaron cambios */
+    }
+
+    /*
+     * REQUISITO 3: Si la ruta no existe
+     */
+    if (!existing_route)
+    {
+        Debug("RIP: Insertando NUEVA ruta: %s/%s via %s (métrica %d) on %s\n",
+              inet_ntoa(*(struct in_addr*)&dest_ip),
+              inet_ntoa(*(struct in_addr*)&dest_mask),
+              inet_ntoa(*(struct in_addr*)&new_gateway_ip),
+              new_metric,
+              in_ifname);
+              
+        /* Inserta una nueva entrada en la tabla de enrutamiento */
+        sr_add_rt_entry(sr,
+                        *(struct in_addr*)&dest_ip,
+                        *(struct in_addr*)&new_gateway_ip,
+                        *(struct in_addr*)&dest_mask,
+                        in_ifname,
+                        (uint8_t)new_metric,
+                        new_route_tag,
+                        new_gateway_ip,  /* learned_from */
+                        now,             /* last_updated */
+                        1,               /* valid */
+                        0);              /* garbage_collection_time */
+        return 1; /* La tabla fue modificada */
+    }
+    
+    /* --- La ruta SÍ existe --- */
+
+    /* No debemos actualizar rutas conectadas directamente (estáticas) */
+    if (existing_route->learned_from == 0) {
+        Debug("RIP: Ignorando anuncio para red conectada directamente: %s/%s\n",
+              inet_ntoa(existing_route->dest), inet_ntoa(existing_route->mask));
+        return 0; /* No se realizan cambios */
+    }
+
+    /*
+     * REQUISITO 4: Si la entrada existe pero está inválida
+     */
+    if (existing_route->valid == 0)
+    {
+        Debug("RIP: Reviviendo ruta inválida: %s/%s via %s (métrica %d) on %s\n",
+              inet_ntoa(existing_route->dest),
+              inet_ntoa(existing_route->mask),
+              inet_ntoa(*(struct in_addr*)&new_gateway_ip),
+              new_metric,
+              in_ifname);
+
+        /*La revive actualizando métrica, gateway, learned_from, etc. */
+        existing_route->metric = (uint8_t)new_metric;
+        existing_route->gw.s_addr = new_gateway_ip;
+        existing_route->route_tag = new_route_tag;
+        existing_route->learned_from = new_gateway_ip;
+        strncpy(existing_route->interface, in_ifname, sr_IFACE_NAMELEN);
+        existing_route->last_updated = now;
+        existing_route->valid = 1; /* La revive */
+        existing_route->garbage_collection_time = 0; /* Detiene G.C. */
+        return 1; /* La tabla fue modificada */
+    }
+
+    /*
+     * REQUISITO 5: Si la entrada fue aprendida del mismo vecino
+     */
+    if (existing_route->learned_from == new_gateway_ip)
+    {
+        int changed = 0;
+        /* Actualiza métrica/gateway/timestamps si cambian */
+        if (existing_route->metric != (uint8_t)new_metric) {
+            existing_route->metric = (uint8_t)new_metric;
+            changed = 1;
+        }
+        if (existing_route->gw.s_addr != new_gateway_ip) {
+            existing_route->gw.s_addr = new_gateway_ip;
+            changed = 1;
+        }
+        if (existing_route->route_tag != new_route_tag) {
+            existing_route->route_tag = new_route_tag;
+            changed = 1;
+        }
+        /* (No dice esto en los comentarios, pero si la métrica/gw cambian, la interfaz también debería) */
+        if (strcmp(existing_route->interface, in_ifname) != 0) {
+            strncpy(existing_route->interface, in_ifname, sr_IFACE_NAMELEN);
+            changed = 1;
+        }
+        
+        /* Y si no, solo refresca el timestamp */
+        existing_route->last_updated = now;
+        
+        if (changed) {
+             Debug("RIP: Actualizando ruta (mismo vecino): %s/%s\n",
+                   inet_ntoa(existing_route->dest), inet_ntoa(existing_route->mask));
+        }
+        
+        return changed; /* 1 si cambió, 0 si solo se refrescó */
+    }
+
+    /*
+     * REQUISITO 6: Si la entrada viene de otro origen (otro vecino)
+     */
+    if (existing_route->learned_from != new_gateway_ip)
+    {
+        /* Reemplaza la ruta si la nueva métrica es mejor */
+        if (new_metric < existing_route->metric)
+        {
+            Debug("RIP: Reemplazando ruta (mejor métrica de nuevo vecino): %s/%s\n",
+                  inet_ntoa(existing_route->dest), inet_ntoa(existing_route->mask));
+                  
+            existing_route->metric = (uint8_t)new_metric;
+            existing_route->gw.s_addr = new_gateway_ip;
+            existing_route->route_tag = new_route_tag;
+            existing_route->learned_from = new_gateway_ip;
+            strncpy(existing_route->interface, in_ifname, sr_IFACE_NAMELEN);
+            existing_route->last_updated = now;
+            /* (Ya era válida, no se toca 'valid' ni 'garbage_collection_time') */
+            return 1; /* La tabla fue modificada */
+        }
+        
+        /* Si la métrica es igual y el next-hop coincide, refresca la entrada. */
+        /* (Caso borde,'learned_from' es diferente pero 'gw' es igual) */
+        if (new_metric == existing_route->metric && existing_route->gw.s_addr == new_gateway_ip)
+        {
+            existing_route->last_updated = now;
+            return 0; /* No se realizaron cambios, igual actualizas last updated pq chequeaste*/
+        }
+
+        /*En caso contrario (peor métrica o diferente camino), ignora la actualización */
+        return 0; /* No se realizaron cambios */
+    }
+
+    /*Nunca debería entrar acá igual con todos los ifs, pero para que compile bien y eso*/
     return 0;
 }
+
 
 void sr_handle_rip_packet(struct sr_instance* sr,
                           const uint8_t* packet,
@@ -210,7 +422,7 @@ void sr_handle_rip_packet(struct sr_instance* sr,
 }
 
 void sr_rip_send_response(struct sr_instance* sr, struct sr_if* interface, uint32_t ipDst) {
-    
+    /*ESTOS SON LOS COMENTARIOS QUE YA ESTABAN:*/   
     /* Reservar buffer para paquete completo con cabecera Ethernet */
     
     /* Construir cabecera Ethernet */
@@ -237,6 +449,164 @@ void sr_rip_send_response(struct sr_instance* sr, struct sr_if* interface, uint3
     /* Calcular checksums */
     
     /* Enviar paquete */
+
+
+    /* 1 Reservar buffer para paquete completo (tamaño MÁXIMO) */
+    /* Asumimos un máximo de 25 entradas (RIP_MAX_ENTRIES) */
+    unsigned int eth_len = sizeof(sr_ethernet_hdr_t);
+    unsigned int ip_len = sizeof(sr_ip_hdr_t);
+    unsigned int udp_len = sizeof(sr_udp_hdr_t);
+    unsigned int rip_max_payload_len = sizeof(sr_rip_packet_t) + (RIP_MAX_ENTRIES * sizeof(sr_rip_entry_t));
+    
+    unsigned int max_buf_len = eth_len + ip_len + udp_len + rip_max_payload_len;
+    uint8_t* packet = (uint8_t*)calloc(1, max_buf_len);
+    if (!packet) {
+        Debug("ERROR: Falla al reservar memoria para paquete RIP de respuesta.\n");
+        return;
+    }
+
+    /* Punteros a las cabeceras */
+    sr_ethernet_hdr_t* eth_hdr = (sr_ethernet_hdr_t*)packet;
+    sr_ip_hdr_t* ip_hdr = (sr_ip_hdr_t*)(packet + eth_len);
+    sr_udp_hdr_t* udp_hdr = (sr_udp_hdr_t*)(packet + eth_len + ip_len);
+    sr_rip_packet_t* rip_packet = (sr_rip_packet_t*)(packet + eth_len + ip_len + udp_len);
+
+    /* 2 Construir paquete RIP (el payload) */
+    /*Armar encabezado RIP de la respuesta */
+    rip_packet->command = RIP_COMMAND_RESPONSE;
+    rip_packet->version = RIP_VERSION;
+    rip_packet->zero = 0;
+
+    /*Recorrer toda la tabla de enrutamiento */
+    pthread_mutex_lock(&rip_metadata_lock); /* Proteger la tabla */
+
+    struct sr_rt* rt_walker = sr->routing_table;
+    int num_routes_sent = 0;
+
+    while (rt_walker && num_routes_sent < RIP_MAX_ENTRIES)
+    {
+        struct sr_rip_entry_t* entry = &rip_packet->entries[num_routes_sent];
+
+        /* Armar la entrada RIP */
+        entry->family = htons(RIP_AFI_IPV4); /* 2 = IPv4 */
+        entry->route_tag = rt_walker->route_tag; /* "dejarlo con valor cero" (letra) (pero lo propagamos si lo aprendimos) */
+        entry->ip = rt_walker->dest.s_addr;
+        entry->mask = rt_walker->mask.s_addr;
+        entry->next_hop = 0x00000000; /* "El next-hop debe ser 0.0.0.0" (letra) */
+
+        /* Normalizar métrica y aplicar Split Horizon */
+        uint32_t metric_to_send = rt_walker->metric;
+
+        /* Acá normalizas métrica a rango RIP (1..INFINITY) */
+        if (metric_to_send > RIP_METRIC_INFINITY) {
+            metric_to_send = RIP_METRIC_INFINITY;
+        }
+
+        /*
+         * Lógica de Split Horizon con Reversa Envenenada:
+         * Si la ruta fue aprendida dinámicamente (learned_from != 0)
+         * Y la interfaz por la que la aprendimos (rt_walker->interface)
+         * es la MISMA que por la que vamos a enviar (interface->name)
+         * -> Anunciamos la ruta con métrica INFINITO (16).
+         */
+        int is_dynamic_route = (rt_walker->learned_from != 0);
+        int learned_on_this_if = (strcmp(rt_walker->interface, interface->name) == 0);
+
+        if (SPLIT_HORIZON_POISONED_REVERSE_ENABLED && is_dynamic_route && learned_on_this_if)
+        {
+            metric_to_send = RIP_METRIC_INFINITY;
+        }
+        
+        entry->metric = htonl(metric_to_send);
+
+        num_routes_sent++;
+        rt_walker = rt_walker->next;
+    }
+    
+    pthread_mutex_unlock(&rip_metadata_lock); /* Liberar la tabla */
+
+    /* 3 Calcular longitudes FINALES del paquete */
+    unsigned int actual_rip_len = sizeof(sr_rip_packet_t) + (num_routes_sent * sizeof(sr_rip_entry_t));
+    unsigned int actual_ip_payload_len = udp_len + actual_rip_len;
+    unsigned int actual_total_len = eth_len + ip_len + actual_ip_payload_len;
+
+    /* 4 Construir cabecera UDP */
+    udp_hdr->uh_sport = htons(RIP_PORT);
+    udp_hdr->uh_dport = htons(RIP_PORT); /* Siempre 520, incluso en respuestas unicast */
+    udp_hdr->uh_ulen = htons(actual_ip_payload_len);
+    udp_hdr->uh_sum = 0; /* Se calcula al final */
+
+    /* 5 Construir cabecera IP */
+    ip_hdr->ip_v = 4;
+    ip_hdr->ip_hl = 5; /* 20 bytes */
+    ip_hdr->ip_tos = 0;
+    ip_hdr->ip_len = htons(ip_len + actual_ip_payload_len);
+    ip_hdr->ip_id = 0; 
+    ip_hdr->ip_off = htons(IP_DF); /* No Fragmentar */
+    ip_hdr->ip_ttl = 1; /* "Todos los mensajes RIP enviados deben tener... TTL fijado en 1." (PDF) */
+    ip_hdr->ip_p = ip_protocol_udp;
+    ip_hdr->ip_src = interface->ip; /* IP de la interfaz de SALIDA */
+    ip_hdr->ip_dst = ipDst;         /* IP de destino (parámetro) */
+    ip_hdr->ip_sum = 0; /* Se calcula al final */
+
+    /* 6 Construir cabecera Ethernet */
+    /* MAC Origen (siempre la de nuestra interfaz de salida) */
+    memcpy(eth_hdr->ether_shost, interface->addr, ETHER_ADDR_LEN);
+    eth_hdr->ether_type = htons(ethertype_ip);
+
+    /* MAC Destino (depende de ipDst) */
+    uint8_t dest_mac[ETHER_ADDR_LEN];
+    int found_mac = 0;
+
+    if (ipDst == htonl(RIP_IP))
+    {
+        /* Es Multicast: Usamos la MAC multicast de RIP */
+        memcpy(dest_mac, rip_multicast_mac, ETHER_ADDR_LEN);
+        found_mac = 1;
+    }
+    else
+    {
+        /* Es Unicast (respuesta a un REQUEST): Buscamos en caché ARP */
+        struct sr_arpentry* arp_entry = sr_arpcache_lookup(&(sr->cache), ipDst);
+        if (arp_entry)
+        {
+            memcpy(dest_mac, arp_entry->mac, ETHER_ADDR_LEN);
+            found_mac = 1;
+            free(arp_entry);
+        }
+        else
+        {
+            /* * No se encontró la MAC. Idealmente, encolaríamos el paquete y enviaríamos 
+             * un ARP Request. Pero para RIP, asumimos que si respondemos a un request,
+             * acabamos de recibir un paquete de él, por lo que su MAC *debería* estar
+             * en la caché. Si no está, descartamos.
+             */
+            Debug("RIP: ERROR! No hay entrada ARP para respuesta unicast a %s. Descartando.\n",
+                  inet_ntoa(*(struct in_addr*)&ipDst));
+            free(packet);
+            return;
+        }
+    }
+    memcpy(eth_hdr->ether_dhost, dest_mac, ETHER_ADDR_LEN);
+
+    /* 7 Calcular checksums */
+
+    /* Checksum IP (solo sobre la cabecera IP) */
+    ip_hdr->ip_sum = ip_cksum(ip_hdr, ip_len);
+    
+    /* Checksum UDP (incluye pseudo-cabecera) */
+    /* Asumimos que la función udp_cksum (de sr_utils.c) maneja la lógica */
+    /* de la pseudo-cabecera internamente, recibiendo el ip_hdr y el udp_hdr. */
+    udp_hdr->uh_sum = udp_cksum(ip_hdr, udp_hdr, actual_ip_payload_len);
+
+    /* 8 Enviar paquete */
+    Debug("-> RIP: Enviando RESPUESTA por %s (hacia %s, %d rutas)\n",
+          interface->name, inet_ntoa(*(struct in_addr*)&ipDst), num_routes_sent);
+          
+    sr_send_packet(sr, packet, actual_total_len, interface->name);
+
+    /* 9 Liberar buffer */
+    free(packet);
 }
 
 void* sr_rip_send_requests(void* arg) {
