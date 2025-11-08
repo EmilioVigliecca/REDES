@@ -20,6 +20,9 @@
 #include "sr_protocol.h"
 #include "sr_arpcache.h"
 #include "sr_utils.h"
+#include "sr_protocol.h" /* <-- Necesario para lo nuevo */
+#include "sr_rip.h"      /* <-- Necesario para lo nuevo*/
+#include <arpa/inet.h> /* <-- Necesario para htonl() que chequea lo de multicast*/
 
 /*---------------------------------------------------------------------
  * Method: sr_init(void)
@@ -209,8 +212,20 @@ void sr_handle_ip_packet(struct sr_instance *sr,
 
       /* Verificar si el paquete es para una de mis interfaces*/
       struct sr_if *coincide = sr_get_interface_given_ip(sr, ip_hdr->ip_dst);
-      if(coincide){
-        printf("Paquete IP LOCAL destinado al router: %s.\n", coincide->name);
+      /* (RIP_IP debería estar definido en sr_rip.h como 224.0.0.9) 
+      ESTO DE MULTICAST ES AGREGADO PARA LA PARTE 2*/
+        int es_rip_multicast = 0;
+        if (ip_hdr->ip_dst == htonl(RIP_IP)) {
+         es_rip_multicast = 1;
+         printf("Paquete IP LOCAL (Multicast RIP) recibido en %s.\n", interface);
+    }  
+    
+    
+      if(coincide || es_rip_multicast){
+        if (coincide) {
+             printf("Paquete IP LOCAL destinado al router: %s.\n", coincide->name);
+        }
+ 
         /*verificar si es un paquete ICMP */
         if (ip_hdr->ip_p == ip_protocol_icmp){
           
@@ -271,17 +286,36 @@ void sr_handle_ip_packet(struct sr_instance *sr,
             printf("Paquete ICMP recibido, pero no un Echo Request. Descartar.\n");
           }
         
-          /*NO SÉ SI ESTO ES ASÍ, NO ESTÁ DEFINIDO CUANDO ES TCP(6) O UDP(17):*/
-        }  else if (ip_hdr->ip_p == 6 || ip_hdr->ip_p == 17){
-            printf("Paquete TCP/UDP destinado al router. Enviando ICMP Port Unreachable.\n");
+          /*NO SÉ SI ESTO ES ASÍ, NO ESTÁ DEFINIDO CUANDO ES TCP(6) O UDP(17): 
+          ESTO ESTÁ MODIFICADO PARA QUE USE LO DE PARTE 2 AHORA*/
+        }  else if (ip_hdr->ip_p == ip_protocol_udp) { /* Protocolo UDP (17) */
+            
+            /* Obtiene cabecera UDP */
+            sr_udp_hdr_t *udp_hdr = (sr_udp_hdr_t *)((uint8_t *)ip_hdr + ip_hdr_len);
+            unsigned int udp_hdr_len = sizeof(sr_udp_hdr_t);
 
-            /*HAY QUE HACER ESTA FUNCIÓN
-            Lo mismo que antes ICMP_DEST_UNREACH = 3 y ICMP_PORT_UNREACH = 3*/
-            sr_send_icmp_error_packet(3, 3, sr, ip_hdr->ip_src, (uint8_t *)ip_hdr);
-        } else{
-          /* Otros protocolos (Creo que debería descartar)*/
-            printf("Paquete con protocolo no manejado (%d) destinado al router. Descartar.\n", ip_hdr->ip_p);
-        }
+            /* (RIP_PORT debería estar definido en enrutamiento como 520) */
+            if (udp_hdr->uh_dport == htons(RIP_PORT)) {
+                
+                printf("-> Paquete UDP para el puerto RIP (520) recibido. Procesando...\n");
+                
+                /* Calcular offsets para la función de RIP */
+                unsigned int ip_off = eth_hdr_len;
+                unsigned int rip_off = eth_hdr_len + ip_hdr_len + udp_hdr_len;
+                unsigned int rip_len = ntohs(udp_hdr->uh_ulen) - udp_hdr_len;
+                
+                /* (interface es el nombre de la interfaz de *llegada*) */
+                sr_handle_rip_packet(sr, packet, len, ip_off, rip_off, rip_len, interface);
+            
+            } else {
+                /* Es UDP, pero no para el puerto RIP */
+                printf("Paquete UDP destinado al router (puerto %d), pero no es RIP. Enviando ICMP Port Unreachable.\n", ntohs(udp_hdr->uh_dport));
+                sr_send_icmp_error_packet(3, 3, sr, ip_hdr->ip_src, (uint8_t *)ip_hdr);
+            }
+
+        } else if (ip_hdr->ip_p == ip_protocol_tcp) { /* Protocolo TCP (6) */
+             printf("Paquete TCP destinado al router. Enviando ICMP Port Unreachable.\n");
+             sr_send_icmp_error_packet(3, 3, sr, ip_hdr->ip_src, (uint8_t *)ip_hdr);
       }
     else{
         /*Hay que reenviar*/
@@ -353,6 +387,7 @@ void sr_handle_ip_packet(struct sr_instance *sr,
       free(srcAddr);
       free(destAddr);
     }
+}
 
 /* Gestiona la llegada de un paquete ARP*/
 void sr_handle_arp_packet(struct sr_instance *sr,
