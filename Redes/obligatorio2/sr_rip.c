@@ -27,6 +27,8 @@ Apagar y prender esto*/
 
 #include "sr_utils.h"
 
+#define RIP_MAX_ENTRIES 25
+
 static pthread_mutex_t rip_metadata_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* Dirección MAC de multicast para los paquetes RIP */
@@ -140,9 +142,9 @@ int sr_rip_update_route(struct sr_instance* sr,
     int is_dynamic = (existing_route && existing_route->learned_from != 0);
 
     
-     * REQUISITO 1: Si la métrica anunciada es >= 16 (INFINITO)
+     /* REQUISITO 1: Si la métrica anunciada es >= 16 (INFINITO)
      */
-    if (announced_metric >= RIP_METRIC_INFINITY)
+    if (announced_metric >= INFINITY)
     {
         /* Si existe una ruta coincidente aprendida *desde el mismo vecino*... */
         if (is_dynamic && existing_route->learned_from == new_gateway_ip)
@@ -151,7 +153,7 @@ int sr_rip_update_route(struct sr_instance* sr,
             if (existing_route->valid) {
                 printf("RIP: Marcando ruta como inválida (vecino anunció INFINITO): %s/%s\n",
                       inet_ntoa(existing_route->dest), inet_ntoa(existing_route->mask));
-                existing_route->metric = RIP_METRIC_INFINITY;
+                existing_route->metric = INFINITY;
                 existing_route->valid = 0; /* Inválida = 0*/
                 existing_route->garbage_collection_time = now; /* Fija tiempo de G.C. */
                 return 1; /* La tabla fue modificada */
@@ -167,7 +169,7 @@ int sr_rip_update_route(struct sr_instance* sr,
     uint32_t new_metric = announced_metric + if_cost;
     
     /* Si resulta >= 16, descarta la actualización. */
-    if (new_metric >= RIP_METRIC_INFINITY) {
+    if (new_metric >= INFINITY) {
         /*Osea no normalizamos a 16, simplemente la descartamos */
         return 0; /* No se realizaron cambios */
     }
@@ -314,8 +316,6 @@ void sr_handle_rip_packet(struct sr_instance* sr,
                           unsigned int rip_len,
                           const char* in_ifname)
 {
-    sr_rip_packet_t* rip_packet = (struct sr_rip_packet_t*)(packet + rip_off);
-
     /* 1 Validar paquete RIP */
 
     /* 2 Si es un RIP_COMMAND_REQUEST, enviar respuesta por la interfaz donde llegó, se sugiere usar función auxiliar sr_rip_send_response */
@@ -369,7 +369,7 @@ void sr_handle_rip_packet(struct sr_instance* sr,
         int cambios = 0;
         int num_entries = (rip_len - sizeof(sr_rip_packet_t)) / sizeof(sr_rip_entry_t);
 
-        /* * Bloque la tabla de enrutamiento para evitar que cambie mientras la estás revisando, 
+        /* * Bloqueo la tabla de enrutamiento para evitar que cambie mientras la estás revisando, 
         Y estas viendo si cambia o no
          */
         pthread_mutex_lock(&rip_metadata_lock);
@@ -405,10 +405,9 @@ void sr_handle_rip_packet(struct sr_instance* sr,
             while (if_walker)
             {
                 /* * La función sr_rip_send_response debe implementar la lógica de "split horizon"
-                 Que es lo de que 
-                 Un router nunca debe anunciar una ruta de vuelta 
-                 por la misma interfaz por la que la aprendió
-                 Pq si hace eso empieza a loopear hasta infinito
+                 Que es lo de que un router nunca debe anunciar una ruta de vuelta 
+                 por la misma interfaz por la que la aprendió porque si hace eso 
+                 empieza a loopear hasta infinito
                 
                 */
                 sr_rip_send_response(sr, if_walker, htonl(RIP_IP));
@@ -488,7 +487,7 @@ void sr_rip_send_response(struct sr_instance* sr, struct sr_if* interface, uint3
         struct sr_rip_entry_t* entry = &rip_packet->entries[num_routes_sent];
 
         /* Armar la entrada RIP */
-        entry->family = htons(RIP_AFI_IPV4); /* 2 = IPv4 */
+        entry->family_identifier = htons(RIP_VERSION); /* 2 = IPv4 */
         entry->route_tag = rt_walker->route_tag; /* "dejarlo con valor cero" (letra) (pero lo propagamos si lo aprendimos) */
         entry->ip = rt_walker->dest.s_addr;
         entry->mask = rt_walker->mask.s_addr;
@@ -498,8 +497,8 @@ void sr_rip_send_response(struct sr_instance* sr, struct sr_if* interface, uint3
         uint32_t metric_to_send = rt_walker->metric;
 
         /* Acá normalizas métrica a rango RIP (1..INFINITY) */
-        if (metric_to_send > RIP_METRIC_INFINITY) {
-            metric_to_send = RIP_METRIC_INFINITY;
+        if (metric_to_send > INFINITY) {
+            metric_to_send = INFINITY;
         }
 
         /*
@@ -514,7 +513,7 @@ void sr_rip_send_response(struct sr_instance* sr, struct sr_if* interface, uint3
 
         if (SPLIT_HORIZON_POISONED_REVERSE_ENABLED && is_dynamic_route && learned_on_this_if)
         {
-            metric_to_send = RIP_METRIC_INFINITY;
+            metric_to_send = INFINITY;
         }
         
         entry->metric = htonl(metric_to_send);
@@ -531,10 +530,10 @@ void sr_rip_send_response(struct sr_instance* sr, struct sr_if* interface, uint3
     unsigned int actual_total_len = eth_len + ip_len + actual_ip_payload_len;
 
     /* 4 Construir cabecera UDP */
-    udp_hdr->uh_sport = htons(RIP_PORT);
-    udp_hdr->uh_dport = htons(RIP_PORT); /* Siempre 520, incluso en respuestas unicast */
-    udp_hdr->uh_ulen = htons(actual_ip_payload_len);
-    udp_hdr->uh_sum = 0; /* Se calcula al final */
+    udp_hdr->src_port = htons(RIP_PORT);
+    udp_hdr->dst_port = htons(RIP_PORT); /* Siempre 520, incluso en respuestas unicast */
+    udp_hdr->length = htons(actual_ip_payload_len);
+    udp_hdr->checksum = 0; /* Se calcula al final */
 
     /* 5 Construir cabecera IP */
     ip_hdr->ip_v = 4;
@@ -597,7 +596,7 @@ void sr_rip_send_response(struct sr_instance* sr, struct sr_if* interface, uint3
     /* Checksum UDP (incluye pseudo-cabecera) */
     /* Asumimos que la función udp_cksum (de sr_utils.c) maneja la lógica */
     /* de la pseudo-cabecera internamente, recibiendo el ip_hdr y el udp_hdr. */
-    udp_hdr->uh_sum = udp_cksum(ip_hdr, udp_hdr, actual_ip_payload_len);
+    udp_hdr->checksum = udp_cksum(ip_hdr, udp_hdr, actual_ip_payload_len);
 
     /* 8 Enviar paquete */
     printf("-> RIP: Enviando RESPUESTA por %s (hacia %s, %d rutas)\n",
@@ -668,18 +667,18 @@ void* sr_rip_send_requests(void* arg) {
         /* 3 Entrada para solicitar la tabla de ruteo completa (RFC 2453) */
         /* Un REQUEST con 1 entrada, AFI=0 y Métrica=16 pide la tabla completa */
         sr_rip_entry_t* entry = &rip_packet->entries[0];
-        entry->family = htons(RIP_AFI_UNSPEC); /* AFI = 0 */
+        entry->family_identifier = htons(0); /* AFI = 0 */
         entry->route_tag = 0;
         entry->ip = 0;
         entry->mask = 0;
         entry->next_hop = 0;
-        entry->metric = htonl(RIP_METRIC_INFINITY); /* Métrica = 16 */
+        entry->metric = htonl(INFINITY); /* Métrica = 16 */
 
         /* 4 Construir cabecera UDP */
-        udp_hdr->uh_sport = htons(RIP_PORT);
-        udp_hdr->uh_dport = htons(RIP_PORT);
-        udp_hdr->uh_ulen = htons(udp_len + rip_payload_len);
-        udp_hdr->uh_sum = 0;
+        udp_hdr->src_port = htons(RIP_PORT);
+        udp_hdr->dst_port = htons(RIP_PORT);
+        udp_hdr->length = htons(udp_len + rip_payload_len);
+        udp_hdr->checksum = 0;
 
         /* 5 Construir cabecera IP */
         ip_hdr->ip_v = 4;
@@ -698,7 +697,7 @@ void* sr_rip_send_requests(void* arg) {
 
         /* 7 Calcular checksums */
         ip_hdr->ip_sum = ip_cksum(ip_hdr, ip_len);
-        udp_hdr->uh_sum = udp_cksum(ip_hdr, udp_hdr, udp_len + rip_payload_len);
+        udp_hdr->checksum = udp_cksum(ip_hdr, udp_hdr, udp_len + rip_payload_len);
         
         /* 8 Enviar paquete */
         printf("-> RIP: Enviando REQUEST por %s\n", interface->name);
@@ -838,7 +837,7 @@ void* sr_rip_timeout_manager(void* arg) {
                     /* Marca la ruta como inválida */
                     rt_walker->valid = 0;
                     /* Fija su métrica a INFINITY */
-                    rt_walker->metric = RIP_METRIC_INFINITY;
+                    rt_walker->metric = INFINITY;
                     /* Anota el tiempo de inicio del proceso de garbage collection */
                     rt_walker->garbage_collection_time = now;
                     
@@ -988,4 +987,3 @@ int sr_rip_init(struct sr_instance* sr) {
 
     return 0;
 }
-

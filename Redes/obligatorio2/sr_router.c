@@ -51,6 +51,8 @@ void sr_init(struct sr_instance* sr)
 
 } /* -- sr_init -- */
 
+struct sr_rt *sr_lpm_lookup(struct sr_instance *sr, uint32_t dest_ip);
+
 /* Envía un paquete ICMP de error */
 void sr_send_icmp_error_packet(uint8_t type,
                               uint8_t code,
@@ -69,6 +71,7 @@ void sr_send_icmp_error_packet(uint8_t type,
      la ruta inversa.
     Uso la función auxiliar que hice abajo*/
 
+    
     struct sr_rt *rt_entry = sr_lpm_lookup(sr, ipDst);
     if (!rt_entry) {
         printf("ERROR: No se encontró ruta para enviar el error ICMP de regreso.\n");
@@ -214,6 +217,7 @@ void sr_handle_ip_packet(struct sr_instance *sr,
       struct sr_if *coincide = sr_get_interface_given_ip(sr, ip_hdr->ip_dst);
       /* (RIP_IP debería estar definido en sr_rip.h como 224.0.0.9) 
       ESTO DE MULTICAST ES AGREGADO PARA LA PARTE 2*/
+        
         int es_rip_multicast = 0;
         if (ip_hdr->ip_dst == htonl(RIP_IP)) {
          es_rip_multicast = 1;
@@ -257,8 +261,9 @@ void sr_handle_ip_packet(struct sr_instance *sr,
             
             /* Encabezado Ethernet (Invertir MACs)*/
             memcpy(eth_reply_hdr->ether_dhost, eHdr->ether_shost, ETHER_ADDR_LEN);
-            memcpy(eth_reply_hdr->ether_shost, coincide->addr, ETHER_ADDR_LEN);
-            
+            struct sr_if *iface_out = sr_get_interface(sr, interface);
+            memcpy(eth_reply_hdr->ether_shost, iface_out->addr, ETHER_ADDR_LEN);
+
             /* Encabezado IP (Invertir IPs, TTL y Checksum)*/
             uint32_t temp_ip = ip_reply_hdr->ip_src;
             ip_reply_hdr->ip_src = ip_reply_hdr->ip_dst;
@@ -295,25 +300,25 @@ void sr_handle_ip_packet(struct sr_instance *sr,
             unsigned int udp_hdr_len = sizeof(sr_udp_hdr_t);
 
             /* (RIP_PORT debería estar definido en enrutamiento como 520) */
-            if (udp_hdr->uh_dport == htons(RIP_PORT)) {
+            if (udp_hdr->dst_port == htons(RIP_PORT)) {
                 
                 printf("-> Paquete UDP para el puerto RIP (520) recibido. Procesando...\n");
                 
                 /* Calcular offsets para la función de RIP */
                 unsigned int ip_off = eth_hdr_len;
                 unsigned int rip_off = eth_hdr_len + ip_hdr_len + udp_hdr_len;
-                unsigned int rip_len = ntohs(udp_hdr->uh_ulen) - udp_hdr_len;
+                unsigned int rip_len = ntohs(udp_hdr->length) - udp_hdr_len;
                 
-                /* (interface es el nombre de la interfaz de *llegada*) */
+                /* (interface es el nombre de la interfaz de llegada) */
                 sr_handle_rip_packet(sr, packet, len, ip_off, rip_off, rip_len, interface);
             
             } else {
                 /* Es UDP, pero no para el puerto RIP */
-                printf("Paquete UDP destinado al router (puerto %d), pero no es RIP. Enviando ICMP Port Unreachable.\n", ntohs(udp_hdr->uh_dport));
+                printf("Paquete UDP destinado al router (puerto %d), pero no es RIP. Enviando ICMP Port Unreachable.\n", ntohs(udp_hdr->dst_port));
                 sr_send_icmp_error_packet(3, 3, sr, ip_hdr->ip_src, (uint8_t *)ip_hdr);
             }
 
-        } else if (ip_hdr->ip_p == ip_protocol_tcp) { /* Protocolo TCP (6) */
+        } else if (ip_hdr->ip_p == 6) { /* Protocolo TCP (6) */
              printf("Paquete TCP destinado al router. Enviando ICMP Port Unreachable.\n");
              sr_send_icmp_error_packet(3, 3, sr, ip_hdr->ip_src, (uint8_t *)ip_hdr);
       }
