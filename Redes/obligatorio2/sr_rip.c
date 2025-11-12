@@ -700,7 +700,7 @@ void* sr_rip_send_requests(void* arg) {
 
         /* 7 Calcular checksums */
         ip_hdr->ip_sum = ip_cksum(ip_hdr, ip_len);
-        udp_hdr->checksum = udp_cksum(ip_hdr, udp_hdr, udp_len + rip_payload_len);
+        udp_hdr->checksum = udp_cksum(ip_hdr, udp_hdr, (const uint8_t*)rip_packet);
         
         /* 8 Enviar paquete */
         printf("-> RIP: Enviando REQUEST por %s\n", interface->name);
