@@ -127,7 +127,7 @@ int sr_rip_update_route(struct sr_instance* sr,
     uint32_t new_gateway_ip = src_ip;
 
     /* 2 Obtener la interfaz de entrada y su costo */
-    struct sr_if* in_iface = sr_get_if(sr, in_ifname);
+    struct sr_if* in_iface = sr_get_interface(sr, in_ifname);
     if (!in_iface) {
         printf("RIP: Error al obtener la interfaz %s. Descartando entrada.\n", in_ifname);
         return -1; /* Fallo al obtener la interfaz */
@@ -331,12 +331,12 @@ void sr_handle_rip_packet(struct sr_instance* sr,
     /* *Obtenemos la cabecera IP para saber quién envió el paquete
      * Esto es crucial tanto para responder a un REQUEST (unicast)
      * como para saber el 'next hop' en un RESPONSE.
-     */
+    */
     sr_ip_hdr_t* ip_hdr = (sr_ip_hdr_t*)(packet + ip_off);
     uint32_t src_ip = ip_hdr->ip_src;
 
     /* Obtenemos la estructura de la interfaz por la que llegó */
-    struct sr_if* in_iface = sr_get_if(sr, in_ifname);
+    struct sr_if* in_iface = sr_get_interface(sr, in_ifname);
     if (!in_iface) {
         printf("RIP: Paquete recibido en interfaz desconocida %s. Descartando.\n", in_ifname);
         return;
@@ -401,19 +401,23 @@ void sr_handle_rip_packet(struct sr_instance* sr,
              * Envia un RESPONSE a la dirección multicast RIP_IP
              * Osea a todas las interfaces
              */
-            struct sr_if* if_walker = sr->if_list;
-            while (if_walker)
-            {
-                /* * La función sr_rip_send_response debe implementar la lógica de "split horizon"
-                 Que es lo de que un router nunca debe anunciar una ruta de vuelta 
-                 por la misma interfaz por la que la aprendió porque si hace eso 
-                 empieza a loopear hasta infinito
-                
-                */
-                sr_rip_send_response(sr, if_walker, htonl(RIP_IP));
-                if_walker = if_walker->next;
+            #ifdef TRIGGERED_UPDATE_ENABLED
+            if(TRIGGERED_UPDATE_ENABLED){
+                struct sr_if* if_walker = sr->if_list;
+                while (if_walker)
+                {
+                    /* * La función sr_rip_send_response debe implementar la lógica de "split horizon"
+                    Que es lo de que un router nunca debe anunciar una ruta de vuelta 
+                    por la misma interfaz por la que la aprendió porque si hace eso 
+                    empieza a loopear hasta infinito
+                    
+                    */
+                    sr_rip_send_response(sr, if_walker, htonl(RIP_IP));
+                    if_walker = if_walker->next;
+                }    
             }
-
+            #endif
+            
             printf("\n-> RIP: Imprimiendo tabla de enrutamiento luego de procesar:\n");
             print_routing_table(sr);
         }
@@ -590,13 +594,12 @@ void sr_rip_send_response(struct sr_instance* sr, struct sr_if* interface, uint3
 
     /* 7 Calcular checksums */
 
-    /* Checksum IP (solo sobre la cabecera IP) */
-    ip_hdr->ip_sum = ip_cksum(ip_hdr, ip_len);
-    
+  
+   
     /* Checksum UDP (incluye pseudo-cabecera) */
     /* Asumimos que la función udp_cksum (de sr_utils.c) maneja la lógica */
     /* de la pseudo-cabecera internamente, recibiendo el ip_hdr y el udp_hdr. */
-    udp_hdr->checksum = udp_cksum(ip_hdr, udp_hdr, actual_ip_payload_len);
+    udp_hdr->checksum = udp_cksum(ip_hdr, udp_hdr, (const uint8_t*)rip_packet);
 
     /* 8 Enviar paquete */
     printf("-> RIP: Enviando RESPUESTA por %s (hacia %s, %d rutas)\n",
@@ -768,6 +771,8 @@ void* sr_rip_periodic_advertisement(void* arg) {
     */
 
     /* En la letra dice que 10 segundos para el timer de avisos no solicitados */
+    sr_rip_send_requests(sr);
+    
     sleep(RIP_ADVERT_INTERVAL_SEC); 
 
     while (1)

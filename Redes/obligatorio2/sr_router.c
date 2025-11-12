@@ -311,7 +311,7 @@ void sr_handle_ip_packet(struct sr_instance *sr,
                 
                 /* (interface es el nombre de la interfaz de llegada) */
                 sr_handle_rip_packet(sr, packet, len, ip_off, rip_off, rip_len, interface);
-            
+                return;
             } else {
                 /* Es UDP, pero no para el puerto RIP */
                 printf("Paquete UDP destinado al router (puerto %d), pero no es RIP. Enviando ICMP Port Unreachable.\n", ntohs(udp_hdr->dst_port));
@@ -365,8 +365,8 @@ void sr_handle_ip_packet(struct sr_instance *sr,
             /*Buscar la MAC en la caché ARP (se necesita para construir la trama)*/
             struct sr_arpentry *arp_entry = sr_arpcache_lookup(&(sr->cache), next_hop_ip);
 
-            memcpy(eHdr->ether_dhost, arp_entry->mac, ETHER_ADDR_LEN);
             if (arp_entry) {
+              memcpy(eHdr->ether_dhost, arp_entry->mac, ETHER_ADDR_LEN);
               /* Se encontró MAC, hay que modificar ethernet y enviar*/
               memcpy(eHdr->ether_shost, iface_out->addr, ETHER_ADDR_LEN);
               free(arp_entry);        
@@ -394,6 +394,13 @@ void sr_handle_ip_packet(struct sr_instance *sr,
     }
 }
 
+void sr_arp_reply_send_pending_packets(struct sr_instance *sr,
+                                        struct sr_arpreq *arpReq,
+                                        uint8_t *dhost,
+                                        uint8_t *shost,
+                                        struct sr_if *iface);
+
+                                        
 /* Gestiona la llegada de un paquete ARP*/
 void sr_handle_arp_packet(struct sr_instance *sr,
         uint8_t *packet /* lent */,

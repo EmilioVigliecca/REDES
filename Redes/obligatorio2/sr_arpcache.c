@@ -13,6 +13,8 @@
 #include "sr_protocol.h"
 #include "sr_utils.h"
 
+
+struct sr_rt *sr_lpm_lookup(struct sr_instance *sr, uint32_t dest_ip);
 /*
 	Envía una solicitud ARP.
 */
@@ -132,7 +134,7 @@ void handle_arpreq(struct sr_instance *sr, struct sr_arpreq *req) {
     /*Ve si es el primer envio o si ha pasado más de un segundo desde el último*/
     if (req->sent == 0 || difftime(now, req->sent) > 1.0) {
         //Reenvias solicitud ARP, como todavía son menos de 5
-        Debug("--> Reenviando ARP para %s (intento %d).\n", ip_to_str(req->ip), req->times_sent + 1);
+        Debug("--> Reenviando ARP para %s (intento %d).\n", inet_ntoa( (struct in_addr){.s_addr = req->ip} ), req->times_sent + 1);
         
         sr_arp_request_send(sr, req->ip);
         
@@ -150,7 +152,7 @@ Envía un mensaje ICMP host unreachable (Tipo 3, Código 1) a los emisores
 de los paquetes esperando en la cola de una solicitud ARP fallida (osea repite 5 veces)
 */
 void host_unreachable(struct sr_instance *sr, struct sr_arpreq *req) {
-    Debug("-> ARP request falló 5 veces para IP %s. Mando los host unreachable \n", ip_to_str(req->ip));
+    Debug("-> ARP request falló 5 veces para IP %s. Mando los host unreachable \n", inet_ntoa( (struct in_addr){.s_addr = req->ip} ));
 
     /*Agarras el primer paquete en la lista enlazada */
     struct sr_packet *packet = req->packets;
