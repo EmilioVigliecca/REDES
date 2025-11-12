@@ -594,8 +594,8 @@ void sr_rip_send_response(struct sr_instance* sr, struct sr_if* interface, uint3
 
     /* 7 Calcular checksums */
 
-  
-   
+    ip_hdr->ip_sum = ip_cksum(ip_hdr, ip_len);
+    
     /* Checksum UDP (incluye pseudo-cabecera) */
     /* Asumimos que la función udp_cksum (de sr_utils.c) maneja la lógica */
     /* de la pseudo-cabecera internamente, recibiendo el ip_hdr y el udp_hdr. */
@@ -717,6 +717,7 @@ void* sr_rip_send_requests(void* arg) {
 
 /* Periodic advertisement thread */
 void* sr_rip_periodic_advertisement(void* arg) {
+    
     struct sr_instance* sr = arg;
 
     sleep(2); // Esperar a que se inicialice todo
@@ -771,7 +772,6 @@ void* sr_rip_periodic_advertisement(void* arg) {
     */
 
     /* En la letra dice que 10 segundos para el timer de avisos no solicitados */
-    sr_rip_send_requests(sr);
     
     sleep(RIP_ADVERT_INTERVAL_SEC); 
 

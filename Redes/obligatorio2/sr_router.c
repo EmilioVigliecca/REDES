@@ -49,6 +49,8 @@ void sr_init(struct sr_instance* sr)
     /* Hilo para gestionar el timeout del caché ARP */
     pthread_create(&thread, &(sr->attr), sr_arpcache_timeout, sr);
 
+    sr_rip_init(sr);
+
 } /* -- sr_init -- */
 
 struct sr_rt *sr_lpm_lookup(struct sr_instance *sr, uint32_t dest_ip);
@@ -172,8 +174,8 @@ void sr_send_icmp_error_packet(uint8_t type,
         sr_arpcache_queuereq(&(sr->cache), next_hop_ip, pkt_reply, total_len, iface_out->name);
         
         /* La caché COPIA el contenido, creo que habría que liberar el buffer original.*/
-        free(pkt_reply);
-        
+        /*free(pkt_reply);
+        */
     }  
 
 } /* -- sr_send_icmp_error_packet -- */
@@ -338,7 +340,7 @@ void sr_handle_ip_packet(struct sr_instance *sr,
             Terminé haciendo una función auxiliar*/
             
             struct sr_rt *next_hop_rt = sr_lpm_lookup(sr, ip_hdr->ip_dst);
-
+            
             if (!next_hop_rt){
               printf("No se encontró ruta para el destino. Enviar ICMP Net Unreachable.\n");
               /* Tipo 3, Código 0*/
@@ -381,7 +383,7 @@ void sr_handle_ip_packet(struct sr_instance *sr,
                 sr_arpcache_queuereq(&(sr->cache), next_hop_ip, packet, len, iface_out->name);
                 /* Creo que hay que hacer esto porque queuereq crea una copia
                 del buffer original.*/
-                free(packet);
+                /*free(packet);*/
               }
 
             }
@@ -541,7 +543,6 @@ struct sr_rt *sr_lpm_lookup(struct sr_instance *sr, uint32_t dest_ip)
         if ((dest_ip & rt_walker->mask.s_addr) == (rt_walker->dest.s_addr & rt_walker->mask.s_addr))
         {
             /* Evaluar el Prefijo Más Largo:*/
-
             if (rt_walker->mask.s_addr > max_prefix_len)
             {
                 max_prefix_len = rt_walker->mask.s_addr;
