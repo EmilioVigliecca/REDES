@@ -21,7 +21,9 @@
 #include "sr_rt.h"
 #include "sr_rip.h"
 
-#define SPLIT_HORIZON_POISONED_REVERSE_ENABLED 1 
+#define SPLIT_HORIZON_POISONED_REVERSE_ENABLED 0 
+#define TRIGGERED_UPDATE_ENABLED 0 
+/*1 habilitado, 0 deshabilitado*/
 /*Pide en la letra que tengas un booleano para
 Apagar y prender esto*/
 
@@ -401,7 +403,6 @@ void sr_handle_rip_packet(struct sr_instance* sr,
              * Envia un RESPONSE a la dirección multicast RIP_IP
              * Osea a todas las interfaces
              */
-            #ifdef TRIGGERED_UPDATE_ENABLED
             if(TRIGGERED_UPDATE_ENABLED){
                 struct sr_if* if_walker = sr->if_list;
                 while (if_walker)
@@ -416,7 +417,6 @@ void sr_handle_rip_packet(struct sr_instance* sr,
                     if_walker = if_walker->next;
                 }    
             }
-            #endif
             
             printf("\n-> RIP: Imprimiendo tabla de enrutamiento luego de procesar:\n");
             print_routing_table(sr);
@@ -604,7 +604,10 @@ void sr_rip_send_response(struct sr_instance* sr, struct sr_if* interface, uint3
     /* 8 Enviar paquete */
     printf("-> RIP: Enviando RESPUESTA por %s (hacia %s, %d rutas)\n",
           interface->name, inet_ntoa(*(struct in_addr*)&ipDst), num_routes_sent);
-          
+   
+    printf("DEBUG: RIP Response. Num rutas: %d. RIP Len: %u. UDP Len: %u. Total Len: %u\n",
+          num_routes_sent, actual_rip_len, actual_ip_payload_len, actual_total_len);
+
     sr_send_packet(sr, packet, actual_total_len, interface->name);
 
     /* 9 Liberar buffer */

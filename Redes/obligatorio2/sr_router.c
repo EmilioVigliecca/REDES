@@ -63,17 +63,16 @@ void sr_send_icmp_error_packet(uint8_t type,
                               uint8_t *ipPacket)
 {
   
-  /* COLOQUE AQUÍ SU CÓDIGO*/
+    /* COLOQUE AQUÍ SU CÓDIGO*/
   
     /* Obtener el encabezado IP del paquete que causó el error*/
     sr_ip_hdr_t *original_ip_hdr = (sr_ip_hdr_t *)ipPacket;
     
     /* Obtener la interfaz de salida (la interfaz que recibió el paquete original)
-     Habría que usar ipDst (la IP de origen del paquete original) para buscar 
-     la ruta inversa.
+    Habría que usar ipDst (la IP de origen del paquete original) para buscar 
+    la ruta inversa.
     Uso la función auxiliar que hice abajo*/
-
-    
+      
     struct sr_rt *rt_entry = sr_lpm_lookup(sr, ipDst);
     if (!rt_entry) {
         printf("ERROR: No se encontró ruta para enviar el error ICMP de regreso.\n");
@@ -88,8 +87,8 @@ void sr_send_icmp_error_packet(uint8_t type,
     /* Si la IP de destino es una IP de Broadcast o Multicast, NO se envía ICMP (RFC 1122)
     Simplificación: si la IP es de broadcast de red (todos unos) o host (todos unos), no enviar.
 
-     El tamaño del paquete de error es fijo para Tipo 3 o Tipo 11:
-     Ethernet (14) + IP (20) + ICMP T3/T11 Header (8 + 28 bytes)*/
+    El tamaño del paquete de error es fijo para Tipo 3 o Tipo 11:
+    Ethernet (14) + IP (20) + ICMP T3/T11 Header (8 + 28 bytes)*/
     unsigned int ip_hdr_len = sizeof(sr_ip_hdr_t);
     unsigned int icmp_error_len = sizeof(sr_icmp_t3_hdr_t); 
     unsigned int total_len = sizeof(sr_ethernet_hdr_t) + ip_hdr_len + icmp_error_len;
@@ -129,6 +128,9 @@ void sr_send_icmp_error_packet(uint8_t type,
     
     /* IP de Destino: La IP de origen del paquete que causó el error*/
     ip_reply->ip_dst = original_ip_hdr->ip_src;
+
+    printf("DEBUG ICMP ERROR: Longitud calculada (IP Hdr + ICMP Seg): %u bytes.\n", ip_hdr_len + icmp_error_len);
+    printf("DEBUG ICMP ERROR: Longitud en IP Hdr (ntohs): %u bytes.\n", ntohs(ip_reply->ip_len));
 
     /* Calcular Checksum IP*/
     ip_reply->ip_sum = 0;
@@ -174,10 +176,9 @@ void sr_send_icmp_error_packet(uint8_t type,
         sr_arpcache_queuereq(&(sr->cache), next_hop_ip, pkt_reply, total_len, iface_out->name);
         
         /* La caché COPIA el contenido, creo que habría que liberar el buffer original.*/
-        /*free(pkt_reply);
-        */
+        free(pkt_reply);
+        
     }  
-
 } /* -- sr_send_icmp_error_packet -- */
 
 void sr_handle_ip_packet(struct sr_instance *sr,
@@ -236,6 +237,7 @@ void sr_handle_ip_packet(struct sr_instance *sr,
         /*verificar si es un paquete ICMP */
         if (ip_hdr->ip_p == ip_protocol_icmp){
           
+          printf("LLEGÓ UN PAQUETE ICMP");
           /* Obtener encabezado ICMP */
           sr_icmp_hdr_t *icmp_hdr = (sr_icmp_hdr_t *)((uint8_t *)ip_hdr + ip_hdr_len);
           unsigned int icmp_data_len = ip_pkt_len - ip_hdr_len;
