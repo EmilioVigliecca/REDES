@@ -394,6 +394,8 @@ void sr_handle_rip_packet(struct sr_instance* sr,
 
         /* * 5 Si hubo un cambio en la tabla, generar triggered update 
          * e imprimir la tabla.
+         *Triggered update forza a los routers a actualizar su tabla de enrutamiento
+         *En vez de que esperen a la llamada periódica de actualización
          */
         if (cambios)
         {
@@ -404,7 +406,7 @@ void sr_handle_rip_packet(struct sr_instance* sr,
              * Osea a todas las interfaces
              */
             if(TRIGGERED_UPDATE_ENABLED){
-                struct sr_if* if_walker = sr->if_list;
+                struct sr_if* if_walker = sr->if_list; /* if_walker es decir interface_walker o iterador de interfaces */
                 while (if_walker)
                 {
                     /* * La función sr_rip_send_response debe implementar la lógica de "split horizon"
