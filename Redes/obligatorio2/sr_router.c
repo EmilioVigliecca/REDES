@@ -308,7 +308,7 @@ void sr_handle_ip_packet(struct sr_instance *sr,
             if (udp_hdr->dst_port == htons(RIP_PORT)) {
               printf("-> Paquete UDP para el puerto RIP (520) recibido. Procesando...\n");
               
-              /* Calcular offsets para la función de RIP, así solo mira el encabezado RIP y no los que ya procesamos */
+              /* Calcular offsets para la función de RIP */
               unsigned int ip_off = eth_hdr_len;
               unsigned int rip_off = eth_hdr_len + ip_hdr_len + udp_hdr_len;
               unsigned int rip_len = ntohs(udp_hdr->length) - udp_hdr_len;

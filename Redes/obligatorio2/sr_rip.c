@@ -21,8 +21,8 @@
 #include "sr_rt.h"
 #include "sr_rip.h"
 
-#define SPLIT_HORIZON_POISONED_REVERSE_ENABLED 0 
-#define TRIGGERED_UPDATE_ENABLED 0 
+#define SPLIT_HORIZON_POISONED_REVERSE_ENABLED 1
+#define TRIGGERED_UPDATE_ENABLED 1
 /*1 habilitado, 0 deshabilitado*/
 /*Pide en la letra que tengas un booleano para
 Apagar y prender esto*/
@@ -207,8 +207,13 @@ int sr_rip_update_route(struct sr_instance* sr,
 
     /* No debemos actualizar rutas conectadas directamente (estáticas) */
     if (existing_route->learned_from == 0) {
-        printf("RIP: Ignorando anuncio para red conectada directamente: %s/%s\n",
-              inet_ntoa(existing_route->dest), inet_ntoa(existing_route->mask));
+        /*Comenté este print porque es muy GEDE y no puedo ver nada, 
+        total ya veo que funciona xd, aunque es raro que la máscara y
+        la ruta coinciden
+        
+        */
+        /*printf("RIP: Ignorando anuncio para red conectada directamente: %s/%s\n",
+              inet_ntoa(existing_route->dest), inet_ntoa(existing_route->mask));*/
         return 0; /* No se realizan cambios */
     }
 
@@ -239,6 +244,7 @@ int sr_rip_update_route(struct sr_instance* sr,
     /*
      * REQUISITO 5: Si la entrada fue aprendida del mismo vecino
      */
+    
     if (existing_route->learned_from == new_gateway_ip)
     {
         int changed = 0;
@@ -383,30 +389,27 @@ void sr_handle_rip_packet(struct sr_instance* sr,
             /* * 4 Usamos la función auxiliar como dice arriba para procesar cada entrada de ruta.
              * El 'neighbor_ip' (src_ip) es el router que nos anunció esta ruta.
              */
-            int resultado = sr_rip_update_route(sr, entry, src_ip, in_ifname);
+            int cambios = sr_rip_update_route(sr, entry, src_ip, in_ifname);
+            /* Marcamos que la tabla cambió*/
             
-            if (resultado == 1) {
-                cambios = 1; /* Marcamos que la tabla cambió*/
-            }
         }
         
         pthread_mutex_unlock(&rip_metadata_lock);
 
         /* * 5 Si hubo un cambio en la tabla, generar triggered update 
          * e imprimir la tabla.
-         *Triggered update forza a los routers a actualizar su tabla de enrutamiento
-         *En vez de que esperen a la llamada periódica de actualización
          */
         if (cambios)
         {
-            printf("-> RIP: Tabla de enrutamiento cambió. Enviando triggered update.\n");
+            printf("-> RIP: Tabla de enrutamiento cambió. \n");
 
             /* * Un "triggered update" es una respuesta a todos los vecinos avisando del cambio
              * Envia un RESPONSE a la dirección multicast RIP_IP
              * Osea a todas las interfaces
              */
             if(TRIGGERED_UPDATE_ENABLED){
-                struct sr_if* if_walker = sr->if_list; /* if_walker es decir interface_walker o iterador de interfaces */
+                printf("TRIGGERED UPDATE ACTIVADO\n");
+                struct sr_if* if_walker = sr->if_list;
                 while (if_walker)
                 {
                     /* * La función sr_rip_send_response debe implementar la lógica de "split horizon"
@@ -606,10 +609,7 @@ void sr_rip_send_response(struct sr_instance* sr, struct sr_if* interface, uint3
     /* 8 Enviar paquete */
     printf("-> RIP: Enviando RESPUESTA por %s (hacia %s, %d rutas)\n",
           interface->name, inet_ntoa(*(struct in_addr*)&ipDst), num_routes_sent);
-   
-    printf("DEBUG: RIP Response. Num rutas: %d. RIP Len: %u. UDP Len: %u. Total Len: %u\n",
-          num_routes_sent, actual_rip_len, actual_ip_payload_len, actual_total_len);
-
+    
     sr_send_packet(sr, packet, actual_total_len, interface->name);
 
     /* 9 Liberar buffer */
